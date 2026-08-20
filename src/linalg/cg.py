@@ -29,8 +29,8 @@ def cg(
         b_norm = 1.0
 
     if save_directions:
-        P = np.zeros((b.size, J))
-        KP = np.zeros((b.size, J))
+        D = np.zeros((b.size, J))
+        KD = np.zeros((b.size, J))
 
     for i in range(J):
         v = np.asarray(matmul(d), dtype=float).reshape(-1)
@@ -39,17 +39,17 @@ def cg(
             raise ValueError("matmul must return a vector with the same shape as b.")
 
         if save_directions and reorthogonalize and i > 0:
-            pKp = np.sum(P[:, :i] * KP[:, :i], axis=0)
-            coeffs = (P[:, :i].T @ v) / pKp
+            dKd = np.sum(D[:, :i] * KD[:, :i], axis=0)
+            coeffs = (D[:, :i].T @ v) / dKd
 
-            d = d - P[:, :i] @ coeffs
-            v = v - KP[:, :i] @ coeffs
+            d = d - D[:, :i] @ coeffs
+            v = v - KD[:, :i] @ coeffs
 
-            pKp = np.sum(P[:, :i] * KP[:, :i], axis=0)
-            coeffs = (P[:, :i].T @ v) / pKp
+            dKd = np.sum(D[:, :i] * KD[:, :i], axis=0)
+            coeffs = (D[:, :i].T @ v) / dKd
 
-            d = d - P[:, :i] @ coeffs
-            v = v - KP[:, :i] @ coeffs
+            d = d - D[:, :i] @ coeffs
+            v = v - KD[:, :i] @ coeffs
 
         dot_dv = np.dot(d, v)
 
@@ -59,15 +59,15 @@ def cg(
         alpha = np.dot(r, d) / dot_dv
 
         if save_directions:
-            P[:, i] = d
-            KP[:, i] = v
+            D[:, i] = d
+            KD[:, i] = v
 
         c += alpha * d
         r -= alpha * v
 
         if np.linalg.norm(r) / b_norm < tol:
             if save_directions:
-                return c, P[:, : i + 1], KP[:, : i + 1]
+                return c, D[:, : i + 1], KD[:, : i + 1]
 
             return c
 
@@ -78,6 +78,6 @@ def cg(
         rdot1 = rdot2
 
     if save_directions:
-        return c, P, KP
+        return c, D, KD
 
     return c

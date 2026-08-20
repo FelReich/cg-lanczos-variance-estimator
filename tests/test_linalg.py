@@ -36,7 +36,7 @@ def test_cg_saved_directions_have_correct_shapes():
     A = make_spd_matrix(20, seed=5)
     b = np.random.default_rng(6).normal(size=20)
 
-    x, P, KP = cg(
+    x, D, KD = cg(
         lambda v: A @ v,
         b,
         J=10,
@@ -46,16 +46,16 @@ def test_cg_saved_directions_have_correct_shapes():
     )
 
     assert x.shape == (20,)
-    assert P.shape == (20, 10)
-    assert KP.shape == (20, 10)
-    assert np.allclose(KP, A @ P)
+    assert D.shape == (20, 10)
+    assert KD.shape == (20, 10)
+    assert np.allclose(KD, A @ D)
 
 
 def test_cg_saved_directions_are_a_conjugate():
     A = make_spd_matrix(20, seed=7)
     b = np.random.default_rng(8).normal(size=20)
 
-    _, P, KP = cg(
+    _, D, KD = cg(
         lambda v: A @ v,
         b,
         J=10,
@@ -64,7 +64,7 @@ def test_cg_saved_directions_are_a_conjugate():
         reorthogonalize=False,
     )
 
-    G = P.T @ KP
+    G = D.T @ KD
     off_diag = G - np.diag(np.diag(G))
 
     assert np.linalg.norm(off_diag) / np.linalg.norm(np.diag(np.diag(G))) < 1e-8
