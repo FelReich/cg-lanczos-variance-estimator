@@ -4,6 +4,7 @@ import matplotlib.pyplot as plt
 from src.gp import GP
 from src.kernels import RBFKernel
 from src.means import ZeroMean
+from src.linalg import ReorthogonalizationRule
 
 
 def make_data(
@@ -116,8 +117,12 @@ def plot_confidence_comparison(
     outputscale: float = 1.0,
     noise: float = 1.0,
     jitter: float = 1e-10,
-    reorthogonalize_cg: bool = True,
-    reorthogonalize_lanczos: bool = True,
+    cg_reorthogonalization_mode: str = "always",
+    cg_reorthogonalization_every: int = 1,
+    cg_reorthogonalization_start: int = 5,
+    cg_rayleigh_tol: float = 1,
+    cg_norm_tol: float = 1,
+    lanczos_reorthogonalize: bool = True,
     seed: int = 123,
 ):
     X_train, y_train, X_test, y_true = make_data(
@@ -129,6 +134,14 @@ def plot_confidence_comparison(
 
     kernel = RBFKernel(lengthscale=lengthscale, outputscale=outputscale)
     mean = ZeroMean()
+
+    cg_reorthogonalization_rule = ReorthogonalizationRule(
+        mode=cg_reorthogonalization_mode,
+        every=cg_reorthogonalization_every,
+        start=cg_reorthogonalization_start,
+        rayleigh_tol=cg_rayleigh_tol,
+        norm_tol=cg_norm_tol,
+    )
 
     gp_exact = GP(X_train, y_train, kernel=kernel, mean=mean, noise=noise)
     gp_exact.compute_posterior(method="exact")
@@ -143,7 +156,7 @@ def plot_confidence_comparison(
         cg_J=cg_J,
         lanczos_J=lanczos_J,
         jitter=jitter,
-        reorthogonalize=reorthogonalize_lanczos,
+        lanczos_reorthogonalize=lanczos_reorthogonalize,
     )
 
     love_variance = gp_love.predict_variance(X_test)
@@ -154,7 +167,7 @@ def plot_confidence_comparison(
         method="cg",
         cg_J=cg_J,
         jitter=jitter,
-        reorthogonalize=reorthogonalize_cg,
+        cg_reorthogonalization_rule=cg_reorthogonalization_rule,
     )
 
     chol_variance = gp_cg.predict_variance(
@@ -250,17 +263,4 @@ def plot_confidence_comparison(
 
 
 if __name__ == "__main__":
-    plot_confidence_comparison(
-        n=100,
-        m=1000,
-        domain=(-3.0, 3.0),
-        cg_J=100,
-        lanczos_J=100,
-        lengthscale=0.3,
-        outputscale=1.0,
-        noise=1.0,
-        jitter=1e-10,
-        reorthogonalize_cg=True,
-        reorthogonalize_lanczos=True,
-        seed=123,
-    )
+    plot_confidence_comparison()

@@ -4,6 +4,8 @@ from collections.abc import Callable
 
 import numpy as np
 
+from .reorthogonalization import ReorthogonalizationRule
+
 
 def cg(
     matmul: Callable[[np.ndarray], np.ndarray],
@@ -11,7 +13,7 @@ def cg(
     J: int,
     tol: float = 1e-6,
     save_directions: bool = False,
-    reorthogonalize: bool = False,
+    reorthogonalization_rule: ReorthogonalizationRule | None = None,
 ) -> np.ndarray | tuple[np.ndarray, np.ndarray, np.ndarray]:
     b = np.asarray(b, dtype=float).reshape(-1)
 
@@ -22,11 +24,18 @@ def cg(
     r = b.copy()
     d = r.copy()
 
+    initial_direction_norm = np.linalg.norm(d)
     rdot1 = np.dot(r, r)
 
     b_norm = np.linalg.norm(b)
     if b_norm == 0:
         b_norm = 1.0
+    
+    if reorthogonalization_rule is None:
+        reorthogonalization_rule = ReorthogonalizationRule(mode="never")
+    
+    if reorthogonalization_rule.mode != "never":
+        save_directions = True
 
     if save_directions:
         D = np.zeros((b.size, J))
@@ -37,21 +46,24 @@ def cg(
 
         if v.shape != d.shape:
             raise ValueError("matmul must return a vector with the same shape as b.")
-
-        if save_directions and reorthogonalize and i > 0:
-            dKd = np.sum(D[:, :i] * KD[:, :i], axis=0)
-            coeffs = (D[:, :i].T @ v) / dKd
-
-            d = d - D[:, :i] @ coeffs
-            v = v - KD[:, :i] @ coeffs
-
-            dKd = np.sum(D[:, :i] * KD[:, :i], axis=0)
-            coeffs = (D[:, :i].T @ v) / dKd
-
-            d = d - D[:, :i] @ coeffs
-            v = v - KD[:, :i] @ coeffs
-
+        
         dot_dv = np.dot(d, v)
+
+        if reorthogonalization_rule(i=i, d=d, v=v, dot_dv=dot_dv, initial_direction_norm=initial_direction_norm):
+            dKd = np.sum(D[:, :i] * KD[:, :i], axis=0)
+            coeffs = (D[:, :i].T @ v) / dKd
+
+            d = d - D[:, :i] @ coeffs
+            v = v - KD[:, :i] @ coeffs
+
+            dKd = np.sum(D[:, :i] * KD[:, :i], axis=0)
+            coeffs = (D[:, :i].T @ v) / dKd
+
+            d = d - D[:, :i] @ coeffs
+            v = v - KD[:, :i] @ coeffs
+
+            dot_dv = np.dot(d, v)
+
 
         if dot_dv <= 0:
             raise RuntimeError("Non-positive d.T @ A @ d encountered.")

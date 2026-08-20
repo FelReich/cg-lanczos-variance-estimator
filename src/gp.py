@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from src.linalg import cg, lanczos_tridiagonalization
+from src.linalg import ReorthogonalizationRule, cg, lanczos_tridiagonalization
 from src.corrections import (
     exact_correction,
     cg_cholesky_correction,
@@ -39,6 +39,10 @@ class GP:
 
         self.method = None
         self.cg_correction_method = None
+
+        self.cg_reorthogonalization_rule = None
+        self.lanczos_reorthogonalize = None
+
         self.alpha = None
 
         self.D = None
@@ -71,13 +75,17 @@ class GP:
         lanczos_J: int | None = None,
         tol: float = 1e-6,
         jitter: float = 1e-6,
-        reorthogonalize: bool = False,
+        cg_reorthogonalization_rule: ReorthogonalizationRule | None = None,
+        lanczos_reorthogonalize: bool = True,
         coordinate_jitter: bool = True,
     ) -> None:
         self.method = method.lower()
 
         self.jitter = float(jitter)
         self.coordinate_jitter = bool(coordinate_jitter)
+
+        self.cg_reorthogonalization_rule = cg_reorthogonalization_rule
+        self.lanczos_reorthogonalize = bool(lanczos_reorthogonalize)
 
         self.D = None
         self.KD = None
@@ -98,7 +106,7 @@ class GP:
                     J=cg_J,
                     tol=tol,
                     save_directions=True,
-                    reorthogonalize=reorthogonalize,
+                    reorthogonalization_rule=cg_reorthogonalization_rule,
                 )
 
             case "love":
@@ -113,7 +121,7 @@ class GP:
                     J=cg_J,
                     tol=tol,
                     save_directions=False,
-                    reorthogonalize=False,
+                    reorthogonalization_rule=None,
                 )
 
                 self.Q, self.T = lanczos_tridiagonalization(
@@ -121,7 +129,7 @@ class GP:
                     self.centered_y,
                     num_iter=lanczos_J,
                     tol=tol,
-                    reorthogonalize=reorthogonalize,
+                    reorthogonalize=lanczos_reorthogonalize,
                 )
 
             case _:

@@ -3,6 +3,7 @@ import pytest
 
 from src.gp import GP
 from src.kernels import RBFKernel
+from src.linalg import ReorthogonalizationRule
 from src.means import ZeroMean
 
 
@@ -61,7 +62,11 @@ def test_cg_posterior_runs_and_returns_variance():
         noise=1e-2,
     )
 
-    gp.compute_posterior(method="cg", cg_J=8, reorthogonalize=True)
+    gp.compute_posterior(
+        method="cg",
+        cg_J=8,
+        cg_reorthogonalization_rule=ReorthogonalizationRule(mode="always"),
+    )
 
     variance = gp.predict_variance(X_test, cg_correction_method="cholesky")
 
@@ -79,7 +84,12 @@ def test_love_posterior_runs_and_returns_variance():
         noise=1e-2,
     )
 
-    gp.compute_posterior(method="love", cg_J=8, lanczos_J=8, reorthogonalize=True)
+    gp.compute_posterior(
+        method="love",
+        cg_J=8,
+        lanczos_J=8,
+        lanczos_reorthogonalize=True,
+    )
 
     variance = gp.predict_variance(X_test)
 

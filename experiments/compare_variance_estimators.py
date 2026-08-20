@@ -5,6 +5,7 @@ import numpy as np
 from src.diagnostics import conjugacy_error, projection_residual, relative_error
 from src.gp import GP
 from src.kernels import RBFKernel
+from src.linalg import ReorthogonalizationRule
 from src.means import ZeroMean
 
 
@@ -20,8 +21,12 @@ def run_variance_comparison(
     lengthscales: list[float] | None = None,
     noises: list[float] | None = None,
     jitters: list[float] | None = None,
-    reorthogonalize_cg: bool = True,
-    reorthogonalize_lanczos: bool = True,
+    cg_reorthogonalization_mode: str = "always",
+    cg_reorthogonalization_every: int = 1,
+    cg_reorthogonalization_start: int = 1,
+    cg_rayleigh_tol: float = 1,
+    cg_norm_tol: float = 1,
+    lanczos_reorthogonalize: bool = True,
     output: str = "both",
 ):
     if lengthscales is None:
@@ -33,6 +38,18 @@ def run_variance_comparison(
     if jitters is None:
         jitters = [0.0, 1e-10, 1e-8, 1e-6, 1e-4, 1e-2]
 
+    output = output.lower()
+    if output not in {"accuracy", "time", "both"}:
+        raise ValueError("output must be one of 'accuracy', 'time', or 'both'.")
+
+    cg_reorthogonalization_rule = ReorthogonalizationRule(
+        mode=cg_reorthogonalization_mode,
+        every=cg_reorthogonalization_every,
+        start=cg_reorthogonalization_start,
+        rayleigh_tol=cg_rayleigh_tol,
+        norm_tol=cg_norm_tol,
+    )
+
     rng = np.random.default_rng(seed)
 
     X_train = rng.uniform(domain[0], domain[1], (n, 1))
@@ -43,10 +60,6 @@ def run_variance_comparison(
 
     y_train = f(X_train).reshape(-1)
     mean = ZeroMean()
-
-    output = output.lower()
-    if output not in {"accuracy", "time", "both"}:
-        raise ValueError("output must be one of 'accuracy', 'time', or 'both'.")
 
     base_header = (
         "lengthscale noise      jitter    "
@@ -102,7 +115,7 @@ def run_variance_comparison(
                 gp_cg.compute_posterior(
                     method="cg",
                     cg_J=cg_J,
-                    reorthogonalize=reorthogonalize_cg,
+                    cg_reorthogonalization_rule=cg_reorthogonalization_rule,
                 )
                 t1 = time.time()
 
@@ -127,7 +140,7 @@ def run_variance_comparison(
                     method="love",
                     cg_J=cg_J,
                     lanczos_J=lanczos_J,
-                    reorthogonalize=reorthogonalize_lanczos,
+                    lanczos_reorthogonalize=lanczos_reorthogonalize,
                 )
                 t_love_fit1 = time.time()
 

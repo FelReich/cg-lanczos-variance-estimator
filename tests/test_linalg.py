@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from src.linalg import cg, lanczos_tridiagonalization
+from src.linalg import ReorthogonalizationRule, cg, lanczos_tridiagonalization
 
 
 def make_spd_matrix(n: int, seed: int = 0, jitter: float = 1e-6) -> np.ndarray:
@@ -42,7 +42,6 @@ def test_cg_saved_directions_have_correct_shapes():
         J=10,
         tol=0.0,
         save_directions=True,
-        reorthogonalize=False,
     )
 
     assert x.shape == (20,)
@@ -61,13 +60,55 @@ def test_cg_saved_directions_are_a_conjugate():
         J=10,
         tol=0.0,
         save_directions=True,
-        reorthogonalize=False,
     )
 
     G = D.T @ KD
     off_diag = G - np.diag(np.diag(G))
 
     assert np.linalg.norm(off_diag) / np.linalg.norm(np.diag(np.diag(G))) < 1e-8
+
+
+def test_cg_reorthogonalization_rule_forces_saved_directions():
+    A = make_spd_matrix(20, seed=13)
+    b = np.random.default_rng(14).normal(size=20)
+
+    x, D, KD = cg(
+        lambda v: A @ v,
+        b,
+        J=10,
+        tol=0.0,
+        save_directions=False,
+        reorthogonalization_rule=ReorthogonalizationRule(mode="always"),
+    )
+
+    assert x.shape == (20,)
+    assert D.shape == (20, 10)
+    assert KD.shape == (20, 10)
+    assert np.allclose(KD, A @ D)
+
+
+def test_cg_reorthogonalization_rule_every():
+    A = make_spd_matrix(20, seed=15)
+    b = np.random.default_rng(16).normal(size=20)
+
+    x, D, KD = cg(
+        lambda v: A @ v,
+        b,
+        J=10,
+        tol=0.0,
+        save_directions=True,
+        reorthogonalization_rule=ReorthogonalizationRule(mode="every", every=3),
+    )
+
+    assert x.shape == (20,)
+    assert D.shape == (20, 10)
+    assert KD.shape == (20, 10)
+    assert np.allclose(KD, A @ D)
+
+
+def test_reorthogonalization_rule_rejects_invalid_mode():
+    with pytest.raises(ValueError):
+        ReorthogonalizationRule(mode="sometimes")
 
 
 def test_lanczos_returns_orthonormal_basis_and_projected_matrix():
