@@ -1,0 +1,266 @@
+import numpy as np
+import matplotlib.pyplot as plt
+
+from src.gp import GP
+from src.kernels import RBFKernel
+from src.means import ZeroMean
+
+
+def make_data(
+    *,
+    n: int,
+    m: int,
+    domain: tuple[float, float],
+    seed: int,
+):
+    rng = np.random.default_rng(seed)
+
+    X_train = rng.uniform(domain[0], domain[1], (n, 1))
+    X_test = np.linspace(domain[0], domain[1], m).reshape(-1, 1)
+
+    def f(x):
+        return np.sin(x) + np.cos(3.0 * x) + np.exp(-x**2)
+
+    y_train = f(X_train).reshape(-1)
+    y_true = f(X_test).reshape(-1)
+
+    return X_train, y_train, X_test, y_true
+
+
+def confidence_bounds(mean, variance, scale: float = 2.0):
+    variance = np.maximum(variance, 0.0)
+    std = np.sqrt(variance)
+
+    return mean - scale * std, mean + scale * std
+
+
+def plot_single_panel(
+    ax,
+    *,
+    x_plot,
+    X_train,
+    y_train,
+    y_true,
+    mean,
+    exact_lower,
+    exact_upper,
+    approx_lower,
+    approx_upper,
+    title,
+    color,
+):
+    ax.plot(
+        x_plot,
+        y_true,
+        color="black",
+        linestyle="--",
+        linewidth=1.8,
+        label="true function",
+    )
+
+    ax.scatter(
+        X_train.squeeze(-1),
+        y_train,
+        color="black",
+        s=10,
+        alpha=0.25,
+        label="training data",
+    )
+
+    ax.plot(
+        x_plot,
+        mean,
+        color="black",
+        linewidth=1.8,
+        label="predictive mean",
+    )
+
+    ax.plot(
+        x_plot,
+        exact_lower,
+        color="red",
+        linestyle="--",
+        linewidth=1.6,
+        label="exact boundary",
+    )
+
+    ax.plot(
+        x_plot,
+        exact_upper,
+        color="red",
+        linestyle="--",
+        linewidth=1.6,
+    )
+
+    ax.fill_between(
+        x_plot,
+        approx_lower,
+        approx_upper,
+        color=color,
+        alpha=0.28,
+        label="approx. area",
+    )
+
+    ax.set_title(title)
+    ax.grid(True, alpha=0.3)
+
+
+def plot_confidence_comparison(
+    *,
+    n: int = 100,
+    m: int = 1000,
+    domain: tuple[float, float] = (-3.0, 3.0),
+    cg_J: int = 100,
+    lanczos_J: int = 100,
+    lengthscale: float = 0.3,
+    outputscale: float = 1.0,
+    noise: float = 1.0,
+    jitter: float = 1e-10,
+    reorthogonalize_cg: bool = True,
+    reorthogonalize_lanczos: bool = True,
+    seed: int = 123,
+):
+    X_train, y_train, X_test, y_true = make_data(
+        n=n,
+        m=m,
+        domain=domain,
+        seed=seed,
+    )
+
+    kernel = RBFKernel(lengthscale=lengthscale, outputscale=outputscale)
+    mean = ZeroMean()
+
+    gp_exact = GP(X_train, y_train, kernel=kernel, mean=mean, noise=noise)
+    gp_exact.compute_posterior(method="exact")
+
+    pred_mean = gp_exact.predict_mean(X_test)
+    exact_variance = gp_exact.predict_variance(X_test)
+    exact_lower, exact_upper = confidence_bounds(pred_mean, exact_variance)
+
+    gp_love = GP(X_train, y_train, kernel=kernel, mean=mean, noise=noise)
+    gp_love.compute_posterior(
+        method="love",
+        cg_J=cg_J,
+        lanczos_J=lanczos_J,
+        jitter=jitter,
+        reorthogonalize=reorthogonalize_lanczos,
+    )
+
+    love_variance = gp_love.predict_variance(X_test)
+    love_lower, love_upper = confidence_bounds(pred_mean, love_variance)
+
+    gp_cg = GP(X_train, y_train, kernel=kernel, mean=mean, noise=noise)
+    gp_cg.compute_posterior(
+        method="cg",
+        cg_J=cg_J,
+        jitter=jitter,
+        reorthogonalize=reorthogonalize_cg,
+    )
+
+    chol_variance = gp_cg.predict_variance(
+        X_test,
+        cg_correction_method="cholesky",
+    )
+    chol_lower, chol_upper = confidence_bounds(pred_mean, chol_variance)
+
+    qr_variance = gp_cg.predict_variance(
+        X_test,
+        cg_correction_method="qr",
+    )
+    qr_lower, qr_upper = confidence_bounds(pred_mean, qr_variance)
+
+    x_plot = X_test.squeeze(-1)
+
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5), sharex=True, sharey=True)
+
+    plot_single_panel(
+        axes[0],
+        x_plot=x_plot,
+        X_train=X_train,
+        y_train=y_train,
+        y_true=y_true,
+        mean=pred_mean,
+        exact_lower=exact_lower,
+        exact_upper=exact_upper,
+        approx_lower=love_lower,
+        approx_upper=love_upper,
+        title=f"LOVE, J={gp_love.Q.shape[1]}",
+        color="tab:orange",
+    )
+
+    plot_single_panel(
+        axes[1],
+        x_plot=x_plot,
+        X_train=X_train,
+        y_train=y_train,
+        y_true=y_true,
+        mean=pred_mean,
+        exact_lower=exact_lower,
+        exact_upper=exact_upper,
+        approx_lower=chol_lower,
+        approx_upper=chol_upper,
+        title=f"CG-Cholesky, J={gp_cg.D.shape[1]}",
+        color="tab:green",
+    )
+
+    plot_single_panel(
+        axes[2],
+        x_plot=x_plot,
+        X_train=X_train,
+        y_train=y_train,
+        y_true=y_true,
+        mean=pred_mean,
+        exact_lower=exact_lower,
+        exact_upper=exact_upper,
+        approx_lower=qr_lower,
+        approx_upper=qr_upper,
+        title=f"CG-QR, J={gp_cg.D.shape[1]}",
+        color="tab:blue",
+    )
+
+    axes[0].set_ylabel("y")
+
+    for ax in axes:
+        ax.set_xlabel("x")
+
+    handles, labels = axes[0].get_legend_handles_labels()
+    fig.legend(
+        handles,
+        labels,
+        loc="upper center",
+        ncol=5,
+        frameon=False,
+    )
+
+    fig.suptitle(
+        "Posterior confidence areas "
+        f"(lengthscale={lengthscale}, noise={noise}, jitter={jitter})",
+        y=1.04,
+    )
+
+    fig.tight_layout()
+    plt.show()
+
+    print("LOVE effective rank:", gp_love.Q.shape[1])
+    print("CG effective rank:", gp_cg.D.shape[1])
+    print("Exact variance min/max:", np.min(exact_variance), np.max(exact_variance))
+    print("LOVE variance min/max:", np.min(love_variance), np.max(love_variance))
+    print("CG-Cholesky variance min/max:", np.min(chol_variance), np.max(chol_variance))
+    print("CG-QR variance min/max:", np.min(qr_variance), np.max(qr_variance))
+
+
+if __name__ == "__main__":
+    plot_confidence_comparison(
+        n=100,
+        m=1000,
+        domain=(-3.0, 3.0),
+        cg_J=100,
+        lanczos_J=100,
+        lengthscale=0.3,
+        outputscale=1.0,
+        noise=1.0,
+        jitter=1e-10,
+        reorthogonalize_cg=True,
+        reorthogonalize_lanczos=True,
+        seed=123,
+    )
