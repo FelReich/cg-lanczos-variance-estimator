@@ -1,0 +1,213 @@
+from __future__ import annotations
+
+import numpy as np
+
+from src.linalg import cg, lanczos_tridiagonalization
+from src.corrections import (
+    exact_correction,
+    cg_cholesky_correction,
+    cg_qr_correction,
+    love_correction,
+)
+
+
+class GP:
+    def __init__(self,
+        X_train: np.ndarray,
+        y_train: np.ndarray,
+        kernel,
+        mean,
+        noise: float = 1e-2,
+    ):
+        if noise < 0:
+            raise ValueError("noise must be nonnegative.")
+
+        self.X_train = self._as_2d(X_train)
+        self.y_train = np.asarray(y_train, dtype=float).reshape(-1)
+        self.kernel = kernel
+        self.mean = mean
+        self.noise = float(noise)
+
+        if self.X_train.shape[0] != self.y_train.shape[0]:
+            raise ValueError("X_train and y_train must have matching first dimension.")
+
+        self.K = self.kernel(self.X_train, self.X_train)
+        self.K_noise = self.K + self.noise * np.eye(self.X_train.shape[0])
+
+        self.train_mean = self.mean(self.X_train)
+        self.centered_y = self.y_train - self.train_mean
+
+        self.method = None
+        self.cg_correction_method = None
+        self.alpha = None
+
+        self.D = None
+        self.KD = None
+
+        self.Q = None
+        self.T = None
+
+        self.jitter = None
+        self.coordinate_jitter = None
+
+        
+
+    @staticmethod
+    def _as_2d(X: np.ndarray) -> np.ndarray:
+        X = np.asarray(X, dtype=float)
+
+        if X.ndim == 1:
+            X = X.reshape(-1, 1)
+
+        if X.ndim != 2:
+            raise ValueError("Input arrays must be one- or two-dimensional.")
+
+        return X
+    
+    def compute_posterior(
+        self,
+        method: str = "exact",
+        cg_J: int | None = None,
+        lanczos_J: int | None = None,
+        tol: float = 1e-6,
+        jitter: float = 1e-6,
+        reorthogonalize: bool = False,
+        coordinate_jitter: bool = True,
+    ) -> None:
+        self.method = method.lower()
+
+        self.jitter = float(jitter)
+        self.coordinate_jitter = bool(coordinate_jitter)
+
+        self.D = None
+        self.KD = None
+        self.Q = None
+        self.T = None
+
+        match self.method:
+            case "exact":
+                self.alpha = np.linalg.solve(self.K_noise, self.centered_y)
+
+            case "cg":
+                if cg_J is None:
+                    raise ValueError("cg_J must be specified for method='cg'.")
+
+                self.alpha, self.D, self.KD = cg(
+                    lambda v: self.K_noise @ v,
+                    self.centered_y,
+                    J=cg_J,
+                    tol=tol,
+                    save_directions=True,
+                    reorthogonalize=reorthogonalize,
+                )
+
+            case "love":
+                if cg_J is None:
+                    raise ValueError("cg_J must be specified for method='love'.")
+                if lanczos_J is None:
+                    raise ValueError("lanczos_J must be specified for method='love'.")
+
+                self.alpha = cg(
+                    lambda v: self.K_noise @ v,
+                    self.centered_y,
+                    J=cg_J,
+                    tol=tol,
+                    save_directions=False,
+                    reorthogonalize=False,
+                )
+
+                self.Q, self.T = lanczos_tridiagonalization(
+                    lambda v: self.K_noise @ v,
+                    self.centered_y,
+                    num_iter=lanczos_J,
+                    tol=tol,
+                    reorthogonalize=reorthogonalize,
+                )
+
+            case _:
+                raise ValueError("method must be one of 'exact', 'cg', or 'love'.")
+            
+    def _require_posterior(self) -> None:
+        if self.method is None or self.alpha is None:
+            raise RuntimeError("compute_posterior must be called before prediction.")
+
+    def prior_covariance(self, X_test: np.ndarray) -> np.ndarray:
+        X_test = self._as_2d(X_test)
+        return self.kernel(X_test, X_test)
+    
+    def train_test_covariance(self, X_test: np.ndarray) -> np.ndarray:
+        X_test = self._as_2d(X_test)
+        return self.kernel(self.X_train, X_test)
+    
+    def predict_mean(self, X_test: np.ndarray) -> np.ndarray:
+        self._require_posterior()
+
+        X_test = self._as_2d(X_test)
+        k = self.train_test_covariance(X_test)
+
+        return self.mean(X_test) + k.T @ self.alpha
+            
+    def predict_covariance(self, X_test: np.ndarray, cg_correction_method: str = "cholesky") -> np.ndarray:
+        cg_correction_method = cg_correction_method.lower()
+        if cg_correction_method not in {"cholesky", "qr"}:
+            raise ValueError("cg_correction_method must be either 'cholesky' or 'qr'.")
+        
+        self.cg_correction_method = cg_correction_method
+        self._require_posterior()
+
+        K_test = self.prior_covariance(X_test)
+        k = self.train_test_covariance(X_test)
+
+        match self.method:
+            case "exact":
+                correction = exact_correction(self.K_noise, k)
+
+            case "cg":
+                if self.D is None or self.KD is None:
+                    raise RuntimeError("CG posterior has not been computed.")
+                
+                match self.cg_correction_method:
+                    case "cholesky":
+                        correction = cg_cholesky_correction(
+                            self.D,
+                            self.KD,
+                            k,
+                            jitter=self.jitter,
+                            coordinate_jitter=self.coordinate_jitter,
+                        )
+                    case "qr":
+                        correction = cg_qr_correction(
+                            self.D,
+                            self.KD,
+                            k,
+                            jitter=self.jitter,
+                        )
+
+            case "love":
+                if self.Q is None or self.T is None:
+                    raise RuntimeError("LOVE posterior has not been computed.")
+                
+                correction = love_correction(
+                    self.Q,
+                    self.T,
+                    k,
+                    jitter=self.jitter,
+                )
+            
+            case _:
+                raise RuntimeError("Invalid posterior method state.")
+            
+        covariance = K_test - correction
+        return 0.5 * (covariance + covariance.T)
+    
+    def predict_variance(self, X_test: np.ndarray, cg_correction_method: str = "cholesky") -> np.ndarray:
+        covariance = self.predict_covariance(X_test, cg_correction_method=cg_correction_method)
+
+        return np.diag(covariance)
+
+    def predict(self, X_test: np.ndarray, cg_correction_method: str = "cholesky") -> tuple[np.ndarray, np.ndarray]:
+        mean = self.predict_mean(X_test)
+        variance = self.predict_variance(X_test, cg_correction_method=cg_correction_method)
+        
+        return mean, variance
+        
