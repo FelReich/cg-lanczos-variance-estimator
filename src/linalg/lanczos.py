@@ -70,3 +70,71 @@ def lanczos_tridiagonalization(
         beta_prev = beta
 
     return Q, T
+
+
+
+def extend_lanczos_basis(
+    matmul: Callable[[np.ndarray], np.ndarray],
+    Q: np.ndarray,
+    target_J: int,
+    tol: float = 1e-12,
+    reorthogonalize: bool = True,
+) -> tuple[np.ndarray, np.ndarray]:
+    Q = np.asarray(Q, dtype=float)
+
+    if Q.ndim != 2:
+        raise ValueError("Q must be a two-dimensional array.")
+
+    n, current_J = Q.shape
+
+    if target_J <= 0:
+        raise ValueError("target_J must be positive.")
+
+    if current_J == 0:
+        raise ValueError("Q must contain at least one basis vector.")
+
+    if target_J <= current_J:
+        Q_final = Q[:, :target_J]
+        KQ_final = np.column_stack(
+            [np.asarray(matmul(Q_final[:, j]), dtype=float).reshape(-1) for j in range(Q_final.shape[1])]
+        )
+        T_final = Q_final.T @ KQ_final
+        return Q_final, 0.5 * (T_final + T_final.T)
+
+    Q_ext = np.zeros((n, target_J))
+    Q_ext[:, :current_J] = Q
+
+    q = Q_ext[:, current_J - 1]
+
+    for j in range(current_J, target_J):
+        v = np.asarray(matmul(q), dtype=float).reshape(-1)
+
+        if v.shape != q.shape:
+            raise ValueError("matmul must return a vector with the same shape as the basis vectors.")
+
+        if reorthogonalize:
+            for _ in range(2):
+                coeffs = Q_ext[:, :j].T @ v
+                v = v - Q_ext[:, :j] @ coeffs
+        else:
+            v = v - Q_ext[:, :j] @ (Q_ext[:, :j].T @ v)
+
+        beta = np.linalg.norm(v)
+
+        if beta < tol:
+            Q_final = Q_ext[:, :j]
+            KQ_final = np.column_stack(
+                [np.asarray(matmul(Q_final[:, ell]), dtype=float).reshape(-1) for ell in range(Q_final.shape[1])]
+            )
+            T_final = Q_final.T @ KQ_final
+            return Q_final, 0.5 * (T_final + T_final.T)
+
+        q = v / beta
+        Q_ext[:, j] = q
+
+    KQ_final = np.column_stack(
+        [np.asarray(matmul(Q_ext[:, j]), dtype=float).reshape(-1) for j in range(Q_ext.shape[1])]
+    )
+    T_final = Q_ext.T @ KQ_final
+
+    return Q_ext, 0.5 * (T_final + T_final.T)
