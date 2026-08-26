@@ -5,6 +5,15 @@ from collections.abc import Callable
 import numpy as np
 
 
+def transform_T(T: np.ndarray) -> np.ndarray:
+    T = np.asarray(T, dtype=float)
+
+    if T.ndim != 2 or T.shape[1] != 2:
+        raise ValueError("T must have shape (n, 2).")
+    
+    return np.diag(T[:, 0]) + np.diag(T[:-1, 1], k=1) + np.diag(T[:-1, 1], k=-1)
+
+
 def lanczos_tridiagonalization(
     matmul: Callable[[np.ndarray], np.ndarray],
     b: np.ndarray,
@@ -19,7 +28,7 @@ def lanczos_tridiagonalization(
 
     n = b.size
     Q = np.zeros((n, num_iter))
-    T = np.zeros((num_iter, num_iter))
+    T = np.zeros((num_iter, 2))
 
     b_norm = np.linalg.norm(b)
     if b_norm == 0:
@@ -41,7 +50,7 @@ def lanczos_tridiagonalization(
             v -= beta_prev * q_prev
 
         alpha = np.dot(q, v)
-        T[j, j] = alpha
+        T[j, 0] = alpha
 
         v -= alpha * q
 
@@ -57,20 +66,18 @@ def lanczos_tridiagonalization(
         beta = np.linalg.norm(v)
 
         if beta < tol:
-            return Q[:, : j + 1], T[: j + 1, : j + 1]
+            return Q[:, : j + 1], transform_T(T[: j + 1, :])
 
         if j == num_iter - 1:
             break
 
-        T[j, j + 1] = beta
-        T[j + 1, j] = beta
+        T[j, 1] = beta
 
         q_prev = q
         q = v / beta
         beta_prev = beta
 
-    return Q, T
-
+    return Q, transform_T(T)
 
 
 def extend_lanczos_basis(

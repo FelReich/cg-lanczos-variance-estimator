@@ -4,9 +4,7 @@ import matplotlib.pyplot as plt
 from src.corrections import exact_correction, cg_qr_correction, love_correction
 from src.gp import GP
 from src.kernels import RBFKernel
-from src.linalg import ReorthogonalizationRule, cg, lanczos_tridiagonalization
-from src.linalg.cg import cg_store_lanczos_basis
-from src.linalg.lanczos import extend_lanczos_basis
+from src.linalg import cg,  cg_store_lanczos_basis, lanczos_tridiagonalization, extend_lanczos_basis, ReorthogonalizationRule
 from src.means import ZeroMean
 
 
