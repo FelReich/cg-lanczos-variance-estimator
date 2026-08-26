@@ -29,6 +29,30 @@ def run_variance_comparison(
     lanczos_reorthogonalize: bool = True,
     output: str = "both",
 ):
+    """Runs accuracy and runtime comparisons for CG-Cholesky, CG-QR, and LOVE.
+
+    The exact posterior covariance is used as the reference. The CG methods use
+    stored CG search directions, while LOVE uses a separate Lanczos basis for
+    the covariance correction.
+
+    :param int seed: Random seed. (Default: `123`.)
+    :param int n: Number of training points. (Default: `1000`.)
+    :param int m: Number of test points. (Default: `100`.)
+    :param tuple domain: Interval from which training and test inputs are sampled. (Default: `(-3.0, 3.0)`.)
+    :param int cg_J: Maximum number of CG iterations. (Default: `100`.)
+    :param int lanczos_J: Maximum number of Lanczos iterations for LOVE. (Default: `100`.)
+    :param float outputscale: Kernel outputscale. (Default: `1.0`.)
+    :param list lengthscales: Lengthscales used in the experiment.
+    :param list noises: Noise levels used in the experiment.
+    :param list jitters: Jitter values used in approximate covariance corrections.
+    :param str cg_reorthogonalization_mode: Reorthogonalization mode for CG search directions. (Default: `"always"`.)
+    :param int cg_reorthogonalization_every: Frequency used when `cg_reorthogonalization_mode="every"`. (Default: `1`.)
+    :param int cg_reorthogonalization_start: First iteration at which CG reorthogonalization is allowed. (Default: `1`.)
+    :param float cg_rayleigh_tol: Rayleigh quotient threshold used when `cg_reorthogonalization_mode="rayleigh"`.
+    :param float cg_norm_tol: Direction norm threshold used when `cg_reorthogonalization_mode="norm"`.
+    :param bool lanczos_reorthogonalize: If True, reorthogonalize Lanczos vectors in LOVE. (Default: True.)
+    :param str output: Output mode. Must be `"accuracy"`, `"time"`, or `"both"`. (Default: `"both"`.)
+    """
     if lengthscales is None:
         lengthscales = [0.1, 0.3, 1.0, 3.0, 10.0]
 

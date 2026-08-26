@@ -30,6 +30,24 @@ def compare_lanczos_extended(
     seed: int = 123,
     view: str = "both",
 ) -> None:
+    """Runs an accuracy and runtime comparison for variance approximation methods.
+
+    The compared methods are CG with QR correction, standard LOVE, and the
+    CG-based Lanczos extension. The exact posterior covariance is used as the
+    reference solution.
+
+    :param int n: Number of training points. (Default: `1000`.)
+    :param int m: Number of test points. (Default: `100`.)
+    :param int cg_J: Maximum number of CG iterations. (Default: `100`.)
+    :param int lanczos_J: Maximum number of Lanczos iterations for LOVE. (Default: `100`.)
+    :param float outputscale: Kernel outputscale. (Default: `1.0`.)
+    :param list lengthscales: Lengthscales used in the experiment.
+    :param list noises: Noise levels used in the experiment.
+    :param list jitters: Jitter values used in approximate covariance corrections.
+    :param tuple domain: Interval from which training and test inputs are sampled. (Default: `(-3.0, 3.0)`.)
+    :param int seed: Random seed. (Default: `123`.)
+    :param str view: Output mode. Must be `"accuracy"`, `"time"`, or `"both"`. (Default: `"both"`.)
+    """
     view = view.lower()
     if view not in {"accuracy", "time", "both"}:
         raise ValueError("view must be one of 'accuracy', 'time', or 'both'.")
@@ -223,4 +241,4 @@ def compare_lanczos_extended(
 
 
 if __name__ == "__main__":
-    compare_lanczos_extended(view="time")
+    compare_lanczos_extended(view="accuracy")

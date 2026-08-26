@@ -4,6 +4,7 @@ import numpy as np
 
 
 def exact_correction(K_noise: np.ndarray, k: np.ndarray) -> np.ndarray:
+    #Computes the exact covariance correction `k.T @ K_noise^{-1} @ k`
     return k.T @ np.linalg.solve(K_noise, k)
 
 
@@ -14,6 +15,7 @@ def cg_cholesky_correction(
     jitter: float = 1e-6,
     coordinate_jitter: bool = True,
 ) -> np.ndarray:
+    #Computes the CG covariance correction in the raw search-direction basis
     G = D.T @ KD
 
     if coordinate_jitter:
@@ -35,6 +37,7 @@ def cg_qr_correction(
     k: np.ndarray,
     jitter: float = 1e-6,
 ) -> np.ndarray:
+    #Computes the CG covariance correction after QR-orthogonalizing the directions
     Q, R = np.linalg.qr(D, mode="reduced")
 
     T = np.linalg.solve(R.T, (Q.T @ KD).T).T
@@ -52,6 +55,7 @@ def love_correction(
     k: np.ndarray,
     jitter: float = 1e-6,
 ) -> np.ndarray:
+    #Computes a LOVE-style covariance correction from a Lanczos basis and projected matrix
     T_jittered = T + jitter * np.eye(T.shape[0])
 
     L = np.linalg.cholesky(T_jittered)

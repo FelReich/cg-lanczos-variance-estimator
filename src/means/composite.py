@@ -6,6 +6,7 @@ from .base import Mean
 
 
 class TrigExpMean(Mean):
+    #One-dimensional mean function combining sine, cosine, and Gaussian-shaped exponential terms
     def __init__(
         self,
         offset: float = 0.0,

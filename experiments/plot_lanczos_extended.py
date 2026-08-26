@@ -22,6 +22,25 @@ def plot_confidence_comparison(
     extension_tol: float = 1e-14,
     seed: int = 123,
 ) -> None:
+    """Plots confidence regions for LOVE, CG-QR, and CG-based Lanczos extension.
+
+    The exact posterior mean and exact confidence boundaries are shown in every
+    panel. Each panel overlays one approximate posterior confidence region.
+    The extended method first recovers a Lanczos basis from CG residuals and then
+    continues this basis with additional Lanczos steps.
+
+    :param int n: Number of training points. (Default: `100`.)
+    :param int m: Number of test points. (Default: `1000`.)
+    :param tuple domain: Sampling and plotting interval. (Default: `(-3.0, 3.0)`.)
+    :param int cg_J: Maximum number of CG iterations. (Default: `100`.)
+    :param int lanczos_J: Maximum number of Lanczos iterations for LOVE. (Default: `100`.)
+    :param float lengthscale: RBF kernel lengthscale. (Default: `0.3`.)
+    :param float outputscale: RBF kernel outputscale. (Default: `1.0`.)
+    :param float noise: Observation noise. (Default: `1.0`.)
+    :param float jitter: Jitter used in approximate covariance corrections. (Default: `1e-10`.)
+    :param float extension_tol: Breakdown tolerance for extending the stored Lanczos basis. (Default: `1e-14`.)
+    :param int seed: Random seed. (Default: `123`.)
+    """
     rng = np.random.default_rng(seed)
 
     X_train = rng.uniform(domain[0], domain[1], size=(n, 1))

@@ -4,6 +4,7 @@ import numpy as np
 
 
 def relative_error(approx: np.ndarray, exact: np.ndarray) -> float:
+    #Computes the relative Frobenius error between an approximation and a reference
     approx = np.asarray(approx, dtype=float)
     exact = np.asarray(exact, dtype=float)
 
@@ -15,6 +16,7 @@ def relative_error(approx: np.ndarray, exact: np.ndarray) -> float:
 
 
 def conjugacy_error(D: np.ndarray, KD: np.ndarray) -> float:
+    #Measures how far the stored directions are from being K-conjugate
     D = np.asarray(D, dtype=float)
     KD = np.asarray(KD, dtype=float)
 
@@ -32,6 +34,7 @@ def conjugacy_error(D: np.ndarray, KD: np.ndarray) -> float:
 
 
 def projection_residual(D: np.ndarray, k: np.ndarray) -> float:
+    #Measures how much of k lies outside the span of the stored directions
     D = np.asarray(D, dtype=float)
     k = np.asarray(k, dtype=float)
 

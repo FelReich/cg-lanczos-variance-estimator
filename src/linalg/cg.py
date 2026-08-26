@@ -15,6 +15,19 @@ def cg(
     save_directions: bool = False,
     reorthogonalization_rule: ReorthogonalizationRule | None = None,
 ) -> np.ndarray | tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Solves a symmetric positive definite linear system with conjugate gradients.
+
+    Optionally stores the CG search directions and their matrix-vector products.
+    These quantities are used later for CG-based covariance corrections.
+
+    :param matmul: Function implementing multiplication by the system matrix.
+    :param numpy.ndarray b: Right-hand side vector.
+    :param int J: Maximum number of CG iterations.
+    :param float tol: Relative residual tolerance for early stopping. (Default: `1e-6`.)
+    :param bool save_directions: If True, return stored search directions and matrix-vector products. (Default: False.)
+    :param ReorthogonalizationRule reorthogonalization_rule: Optional rule deciding when to reorthogonalize search directions.
+    :return: Approximate solution, and optionally stored directions `D` and products `KD`.
+    """
     b = np.asarray(b, dtype=float).reshape(-1)
 
     if J <= 0:
@@ -35,6 +48,7 @@ def cg(
         reorthogonalization_rule = ReorthogonalizationRule(mode="never")
     
     if reorthogonalization_rule.mode != "never":
+        #Reorthogonalization requires access to previous directions
         save_directions = True
 
     if save_directions:
@@ -102,6 +116,20 @@ def cg_store_lanczos_basis(
     tol: float = 1e-6,
     reorthogonalize: bool = True,
 ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Runs CG while storing normalized residuals as a Lanczos basis.
+
+    In exact arithmetic, normalized CG residuals form the Lanczos basis associated
+    with the same Krylov subspace, up to alternating signs. This function stores
+    that basis and the corresponding matrix-vector products so that the projected
+    matrix can later be formed as `Q.T @ KQ`.
+
+    :param matmul: Function implementing multiplication by the system matrix.
+    :param numpy.ndarray b: Right-hand side vector.
+    :param int J: Maximum number of CG iterations.
+    :param float tol: Relative residual tolerance for early stopping. (Default: `1e-6`.)
+    :param bool reorthogonalize: If True, reorthogonalize stored residual basis vectors. (Default: True.)
+    :return: Approximate solution, residual-based Lanczos basis `Q`, and products `KQ`.
+    """
     b = np.asarray(b, dtype=float).reshape(-1)
 
     if J <= 0:
@@ -119,9 +147,6 @@ def cg_store_lanczos_basis(
 
     Q = np.zeros((b.size, J))
     KQ = np.zeros((b.size, J))
-
-    Kd_prev = np.zeros_like(b)
-    beta = 0.0
 
     for i in range(J):
         Kd = np.asarray(matmul(d), dtype=float).reshape(-1)
@@ -141,18 +166,13 @@ def cg_store_lanczos_basis(
             KQ_final = KQ[:, :i]
             return c, Q_final, KQ_final
 
+        #Normalized CG residuals form the Lanczos basis up to alternating signs
         q = ((-1) ** i) * r / r_norm
-
-        if i == 0:
-            Kq = ((-1) ** i) * Kd / r_norm
-        else:
-            Kq = ((-1) ** i) * (Kd - beta * Kd_prev) / r_norm
 
         if reorthogonalize and i > 0:
             for _ in range(2):
                 coeffs = Q[:, :i].T @ q
                 q = q - Q[:, :i] @ coeffs
-                Kq = Kq - KQ[:, :i] @ coeffs
 
             q_norm = np.linalg.norm(q)
 
@@ -163,11 +183,9 @@ def cg_store_lanczos_basis(
                 return c, Q_final, KQ_final
 
             q = q / q_norm
-            Kq = Kq / q_norm
 
         Q[:, i] = q
-        Kq = np.asarray(matmul(q), dtype=float).reshape(-1)
-        KQ[:, i] = Kq
+        KQ[:, i] = np.asarray(matmul(q), dtype=float).reshape(-1)
 
         alpha = rdot1 / dot_dv
 
@@ -183,8 +201,6 @@ def cg_store_lanczos_basis(
 
         rdot2 = r_norm_new**2
         beta = rdot2 / rdot1
-
-        Kd_prev = Kd
 
         d = r + beta * d
         rdot1 = rdot2

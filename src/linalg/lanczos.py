@@ -6,6 +6,11 @@ import numpy as np
 
 
 def transform_T(T: np.ndarray) -> np.ndarray:
+    """Converts compact tridiagonal storage into a dense matrix.
+
+    The first column contains the diagonal entries and the second column contains
+    the upper/lower off-diagonal entries.
+    """
     T = np.asarray(T, dtype=float)
 
     if T.ndim != 2 or T.shape[1] != 2:
@@ -21,6 +26,15 @@ def lanczos_tridiagonalization(
     tol: float = 1e-6,
     reorthogonalize: bool = True,
 ) -> tuple[np.ndarray, np.ndarray]:
+    """Computes a Lanczos basis and the associated tridiagonal matrix.
+
+    :param matmul: Function implementing multiplication by the symmetric matrix.
+    :param numpy.ndarray b: Initial vector for the Krylov subspace.
+    :param int num_iter: Maximum number of Lanczos iterations.
+    :param float tol: Breakdown tolerance for stopping early. (Default: `1e-6`.)
+    :param bool reorthogonalize: If True, use two reorthogonalization passes. (Default: True.)
+    :return: Lanczos basis `Q` and dense tridiagonal matrix `T`.
+    """
     b = np.asarray(b, dtype=float).reshape(-1)
 
     if num_iter <= 0:
@@ -87,6 +101,19 @@ def extend_lanczos_basis(
     target_J: int,
     tol: float = 1e-12,
 ) -> tuple[np.ndarray, np.ndarray]:
+    """Extends an existing Lanczos basis and returns its projected matrix.
+
+    The input basis is extended by continuing the Lanczos orthogonalization
+    process from the last stored basis vector. Matrix-vector products are stored
+    in `KQ`, so the projected matrix is formed as `Q.T @ KQ`.
+
+    :param matmul: Function implementing multiplication by the symmetric matrix.
+    :param numpy.ndarray Q: Existing basis of shape `n x J`.
+    :param numpy.ndarray KQ: Matrix-vector products corresponding to `Q`.
+    :param int target_J: Desired maximum final basis size.
+    :param float tol: Breakdown tolerance for stopping early. (Default: `1e-12`.)
+    :return: Extended basis `Q_ext` and projected matrix `T_ext`.
+    """
     Q = np.asarray(Q, dtype=float)
 
     if Q.ndim != 2:
@@ -131,7 +158,7 @@ def extend_lanczos_basis(
 
         if beta < tol:
             Q_final = Q_ext[:, :j]
-            KQ_final = Q_ext[:, :j]
+            KQ_final = KQ_ext[:, :j]
             T_final = Q_final.T @ KQ_final
             return Q_final, 0.5 * (T_final + T_final.T)
 

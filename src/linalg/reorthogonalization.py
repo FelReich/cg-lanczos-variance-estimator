@@ -4,6 +4,22 @@ import numpy as np
 
 
 class ReorthogonalizationRule:
+    """Decides when CG search directions should be reorthogonalized.
+
+    The rule is called once per CG iteration and returns True if the current
+    direction should be reorthogonalized against previously stored directions.
+
+    :param str mode: Reorthogonalization strategy. Must be one of `"never"`,
+        `"always"`, `"every"`, `"rayleigh"`, or `"norm"`. (Default: `"never"`.)
+    :param int every: Reorthogonalize every `every` iterations when `mode="every"`.
+        (Default: `1`.)
+    :param int start: First iteration at which reorthogonalization is allowed.
+        (Default: `1`.)
+    :param float rayleigh_tol: Threshold for the Rayleigh quotient
+        `d.T @ A @ d / d.T @ d` when `mode="rayleigh"`. (Default: `1e-12`.)
+    :param float norm_tol: Threshold for the relative direction norm
+        `norm(d) / initial_direction_norm` when `mode="norm"`. (Default: `1e-12`.)
+    """
     def __init__(
         self,
         mode: str = "never",
@@ -29,6 +45,9 @@ class ReorthogonalizationRule:
 
         if self.norm_tol <= 0:
             raise ValueError("norm_tol must be positive.")
+        
+        if self.start < 0:
+            raise ValueError("start must be nonnegative.")
 
     def __call__(
         self,
@@ -39,6 +58,7 @@ class ReorthogonalizationRule:
         dot_dv: float,
         initial_direction_norm: float,
     ) -> bool:
+        #Returns whether the current CG direction should be reorthogonalized
         if i < self.start:
             return False
         

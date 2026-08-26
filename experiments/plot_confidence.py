@@ -14,6 +14,14 @@ def make_data(
     domain: tuple[float, float],
     seed: int,
 ):
+    """Generates one-dimensional training and test data for visualization.
+
+    :param int n: Number of training points.
+    :param int m: Number of test points.
+    :param tuple domain: Interval used for input locations.
+    :param int seed: Random seed.
+    :return: Training inputs, training targets, test inputs, and true test values.
+    """
     rng = np.random.default_rng(seed)
 
     X_train = rng.uniform(domain[0], domain[1], (n, 1))
@@ -29,6 +37,7 @@ def make_data(
 
 
 def confidence_bounds(mean, variance, scale: float = 2.0):
+    #Computes symmetric confidence bounds around a mean curve
     variance = np.maximum(variance, 0.0)
     std = np.sqrt(variance)
 
@@ -50,6 +59,7 @@ def plot_single_panel(
     title,
     color,
 ):
+    #Plots one posterior confidence comparison panel
     ax.plot(
         x_plot,
         y_true,
@@ -125,6 +135,28 @@ def plot_confidence_comparison(
     lanczos_reorthogonalize: bool = True,
     seed: int = 123,
 ):
+    """Plots confidence regions for LOVE, CG-Cholesky, and CG-QR approximations.
+
+    The exact posterior mean and exact confidence boundary are shown in every
+    panel. Each panel then overlays one approximate posterior confidence region.
+
+    :param int n: Number of training points. (Default: `100`.)
+    :param int m: Number of test points. (Default: `1000`.)
+    :param tuple domain: Plotting and sampling interval. (Default: `(-3.0, 3.0)`.)
+    :param int cg_J: Maximum number of CG iterations. (Default: `100`.)
+    :param int lanczos_J: Maximum number of Lanczos iterations for LOVE. (Default: `100`.)
+    :param float lengthscale: RBF kernel lengthscale. (Default: `0.3`.)
+    :param float outputscale: RBF kernel outputscale. (Default: `1.0`.)
+    :param float noise: Observation noise. (Default: `1.0`.)
+    :param float jitter: Jitter used in approximate covariance corrections. (Default: `1e-10`.)
+    :param str cg_reorthogonalization_mode: Reorthogonalization mode for CG directions. (Default: `"always"`.)
+    :param int cg_reorthogonalization_every: Frequency used when mode is `"every"`. (Default: `1`.)
+    :param int cg_reorthogonalization_start: First iteration where reorthogonalization is allowed. (Default: `5`.)
+    :param float cg_rayleigh_tol: Rayleigh threshold used when mode is `"rayleigh"`.
+    :param float cg_norm_tol: Direction norm threshold used when mode is `"norm"`.
+    :param bool lanczos_reorthogonalize: If True, reorthogonalize Lanczos vectors. (Default: True.)
+    :param int seed: Random seed. (Default: `123`.)
+    """
     X_train, y_train, X_test, y_true = make_data(
         n=n,
         m=m,
