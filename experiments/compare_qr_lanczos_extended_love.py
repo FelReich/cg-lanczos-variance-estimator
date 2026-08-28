@@ -16,7 +16,7 @@ from src.linalg import cg,  cg_store_lanczos_basis, lanczos_tridiagonalization, 
 from src.means import ZeroMean
 
 
-def compare_lanczos_extended(
+def compare_qr_lanczos_extended_love(
     *,
     n: int = 1000,
     m: int = 100,
@@ -242,4 +242,4 @@ def compare_lanczos_extended(
 
 
 if __name__ == "__main__":
-    compare_lanczos_extended(view="accuracy")
+    compare_qr_lanczos_extended_love(view="accuracy")
