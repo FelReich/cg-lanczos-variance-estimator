@@ -140,11 +140,12 @@ def compare_lanczos_extended(
                     gp_exact.centered_y,
                     J=cg_J,
                     tol=1e-6,
-                    reorthogonalize=True,
+                    reorthogonalization_rule=rule,
                 )
                 t5 = time.time()
 
-                target_J = Q_resid.shape[1] + Q_love.shape[1]//2
+                #target_J = Q_resid.shape[1] + Q_love.shape[1]//2
+                target_J = max(Q_love.shape[1],Q_resid.shape[1])
 
                 t6 = time.time()
                 Q_ext, T_ext = extend_lanczos_basis(

@@ -109,7 +109,7 @@ def cg(
     return c
 
 
-def cg_store_lanczos_basis(
+def cg_store_lanczos_basis_from_scratch(
     matmul: Callable[[np.ndarray], np.ndarray],
     b: np.ndarray,
     J: int,
@@ -206,3 +206,35 @@ def cg_store_lanczos_basis(
         rdot1 = rdot2
 
     return c, Q, KQ
+
+
+def cg_store_lanczos_basis(
+    matmul: Callable[[np.ndarray], np.ndarray],
+    b: np.ndarray,
+    J: int,
+    tol: float = 1e-6,
+    reorthogonalization_rule: ReorthogonalizationRule | None = None,
+) -> np.ndarray | tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Runs CG and converts the stored search directions into a Lanczos-type basis.
+
+    The CG solve stores the search directions `D` and the corresponding matrix-vector
+    products `KD`. A reduced QR factorization `D = Q R` is then used to obtain an
+    orthonormal basis for the same Krylov subspace. The associated products are
+    recovered without additional system matrix-vector multiplications by using
+    `KQ = KD @ R^{-1}`.
+
+    :param matmul: Function implementing multiplication by the system matrix.
+    :param numpy.ndarray b: Right-hand side vector.
+    :param int J: Maximum number of CG iterations.
+    :param float tol: Relative residual tolerance for early stopping. (Default: `1e-6`.)
+    :param ReorthogonalizationRule reorthogonalization_rule: Optional rule deciding
+        when CG search directions should be reorthogonalized.
+    :return: Approximate solution, QR-orthogonalized Krylov basis `Q`, and products `KQ`.
+    """
+    c, D, KD = cg(matmul, b, J=J, tol=tol, save_directions=True, reorthogonalization_rule=reorthogonalization_rule)
+
+    Q, R = np.linalg.qr(D, mode="reduced")
+    KQ = np.linalg.solve(R.T, KD.T).T
+
+    return c, Q, KQ
+
