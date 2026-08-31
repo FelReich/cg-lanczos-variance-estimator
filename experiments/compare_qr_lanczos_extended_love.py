@@ -148,10 +148,12 @@ def compare_qr_lanczos_extended_love(
                 target_J = max(Q_love.shape[1],Q_resid.shape[1])
 
                 t6 = time.time()
+                T_resid = Q_resid.T@KQ_resid
+                T_resid = 0.5 * (T_resid.T + T_resid)
                 Q_ext, T_ext = extend_lanczos_basis(
                     lambda v: gp_exact.K_noise @ v,
                     Q_resid,
-                    KQ_resid,
+                    T_resid,
                     target_J=target_J,
                     tol=1e-14,
                 )

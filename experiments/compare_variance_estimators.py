@@ -1,12 +1,19 @@
 import time
+import sys
+from pathlib import Path
 
 import numpy as np
 
-from src.diagnostics import conjugacy_error, projection_residual, relative_error
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from src.diagnostics import projection_residual, relative_error
 from src.gp import GP
 from src.kernels import RBFKernel
 from src.linalg import ReorthogonalizationRule
 from src.means import ZeroMean
+from src.diagnostics import conjugacy_error
 
 
 def run_variance_comparison(

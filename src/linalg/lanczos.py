@@ -94,7 +94,7 @@ def lanczos_tridiagonalization(
     return Q, transform_T(T)
 
 
-def extend_lanczos_basis(
+def extend_lanczos_basis_qkq(
     matmul: Callable[[np.ndarray], np.ndarray],
     Q: np.ndarray,
     KQ: np.ndarray,
@@ -178,3 +178,102 @@ def extend_lanczos_basis(
 
     T_final = Q_ext.T @ KQ_ext
     return Q_ext, 0.5 * (T_final + T_final.T)
+
+
+def extend_lanczos_basis(
+    matmul: Callable[[np.ndarray], np.ndarray],
+    Q: np.ndarray,
+    T: np.ndarray,
+    target_J: int,
+    tol: float = 1e-12,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Extends an existing Lanczos basis using only the basis and tridiagonal matrix.
+
+    The extension is initialized from the last stored Lanczos vector and the
+    recurrence coefficients contained in `T`. During the extension, only the
+    basis vectors and the tridiagonal coefficients are stored; matrix-vector
+    products `KQ` are not stored.
+
+    :param matmul: Function implementing multiplication by the symmetric matrix.
+    :param numpy.ndarray Q: Existing Lanczos basis of shape `n x J`.
+    :param numpy.ndarray T: Existing projected tridiagonal matrix of shape `J x J`.
+    :param int target_J: Desired maximum final basis size.
+    :param float tol: Breakdown tolerance for stopping early. (Default: `1e-12`.)
+    :return: Extended basis `Q_ext` and extended tridiagonal matrix `T_ext`.
+    """
+    Q = np.asarray(Q, dtype=float)
+    T = np.asarray(T, dtype=float)
+
+    if Q.ndim != 2:
+        raise ValueError("Q must be a two-dimensional array.")
+
+    n, current_J = Q.shape
+
+    if current_J == 0:
+        raise ValueError("Q must contain at least one basis vector.")
+
+    if T.shape != (current_J, current_J):
+        raise ValueError("T must have shape (current_J, current_J).")
+
+    if target_J <= 0:
+        raise ValueError("target_J must be positive.")
+
+    if target_J <= current_J:
+        Q_final = Q[:, :target_J]
+        T_final = T[:target_J, :target_J]
+        return Q_final, 0.5 * (T_final + T_final.T)
+
+    Q_ext = np.zeros((n, target_J))
+    Q_ext[:, :current_J] = Q
+
+    T_ext = np.zeros((target_J, target_J))
+    T_ext[:current_J, :current_J] = 0.5 * (T + T.T)
+
+    q = Q_ext[:, current_J - 1].copy()
+
+    v = np.asarray(matmul(q), dtype=float).reshape(-1)
+
+    if v.shape != q.shape:
+        raise ValueError("matmul must return a vector with the same shape as the basis vectors.")
+
+    v -= T_ext[current_J - 1, current_J - 1] * q
+
+    if current_J > 1:
+        v -= T_ext[current_J - 2, current_J - 1] * Q_ext[:, current_J - 2]
+
+    for _ in range(2):
+        coeffs = Q_ext[:, :current_J].T @ v
+        v -= Q_ext[:, :current_J] @ coeffs
+
+    for j in range(current_J, target_J):
+        beta = np.linalg.norm(v)
+
+        if beta < tol:
+            Q_final = Q_ext[:, :j]
+            T_final = T_ext[:j, :j]
+            return Q_final, 0.5 * (T_final + T_final.T)
+
+        T_ext[j - 1, j] = beta
+        T_ext[j, j - 1] = beta
+
+        q_prev = q
+        q = v / beta
+
+        Q_ext[:, j] = q
+
+        v = np.asarray(matmul(q), dtype=float).reshape(-1)
+
+        if v.shape != q.shape:
+            raise ValueError("matmul must return a vector with the same shape as the basis vectors.")
+
+        alpha = np.dot(q, v)
+        T_ext[j, j] = alpha
+
+        v -= alpha * q
+        v -= beta * q_prev
+
+        for _ in range(2):
+            coeffs = Q_ext[:, : j + 1].T @ v
+            v -= Q_ext[:, : j + 1] @ coeffs
+
+    return Q_ext, 0.5 * (T_ext + T_ext.T)

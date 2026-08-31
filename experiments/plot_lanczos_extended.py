@@ -1,6 +1,13 @@
 import numpy as np
 import matplotlib.pyplot as plt
 
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
 from src.corrections import exact_correction, cg_qr_correction, love_correction
 from src.gp import GP
 from src.kernels import RBFKernel
@@ -84,12 +91,14 @@ def plot_confidence_comparison(
         reorthogonalization_rule=rule,
     )
 
+    rule = ReorthogonalizationRule(mode="always")
+
     _, Q_resid, KQ_resid = cg_store_lanczos_basis(
         lambda v: gp.K_noise @ v,
         gp.centered_y,
         J=cg_J,
         tol=1e-6,
-        reorthogonalize=True,
+        reorthogonalization_rule=rule,
     )
 
     Q_love, T_love = lanczos_tridiagonalization(
@@ -102,10 +111,12 @@ def plot_confidence_comparison(
 
     target_J = Q_resid.shape[1] + Q_love.shape[1]
 
+    T_resid = Q_resid.T@KQ_resid
+    T_resid = 0.5 * (T_resid.T + T_resid)
     Q_ext, T_ext = extend_lanczos_basis(
         lambda v: gp.K_noise @ v,
         Q_resid,
-        KQ_resid,
+        T_resid,
         target_J=target_J,
         tol=extension_tol,
     )
