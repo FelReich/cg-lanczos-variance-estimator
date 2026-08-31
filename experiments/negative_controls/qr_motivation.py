@@ -239,4 +239,4 @@ def compare_qr_motivation(
 
 
 if __name__ == "__main__":
-    compare_qr_motivation(view="time")
+    compare_qr_motivation(view="accuracy")
