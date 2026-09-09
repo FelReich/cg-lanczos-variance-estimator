@@ -76,13 +76,13 @@ def compare_lanczos_extended_love(
     device = torch.device(device)
 
     if lengthscales is None:
-        lengthscales = [10.0]#[0.1, 1.0, 10.0]
+        lengthscales = [0.1, 0.3, 1.0, 3.0, 10.0]
 
     if noises is None:
         noises = [1e-4, 1e-2, 1.0]
 
     if jitters is None:
-        jitters = [1e-8]
+        jitters = [1e-8, 1e-6, 1e-4]
 
     generator = torch.Generator(device=device)
     generator.manual_seed(seed)
@@ -157,25 +157,22 @@ def compare_lanczos_extended_love(
                     _, Q_resid, T_resid = cg_store_lanczos_basis(
                         lambda v: torch.matmul(gp_exact.K_noise, v),
                         rhs,
-                        tolerance=1e-6,
+                        tolerance=1e-5,
                         max_iter=cg_J,
                     )
                     _sync_if_needed(device)
                     t1 = time.perf_counter()
-                    print(T_resid.shape)
 
                     _sync_if_needed(device)
                     t2 = time.perf_counter()
                     _ = linear_cg(
                         lambda v: torch.matmul(gp_exact.K_noise, v),
                         rhs,
-                        tolerance=1e-6,
+                        tolerance=1e-5,
                         max_iter=cg_J,
                     )
                     _sync_if_needed(device)
                     t3 = time.perf_counter()
-                    print(_.shape)
-
                     _sync_if_needed(device)
                     t4 = time.perf_counter()
                     Q_love, T_love = lanczos_tridiag(
@@ -191,7 +188,6 @@ def compare_lanczos_extended_love(
                     )
                     _sync_if_needed(device)
                     t5 = time.perf_counter()
-                    print(T_love.shape)
 
                     target_J = max(Q_resid.shape[-1], Q_love.shape[-1])
 
@@ -223,12 +219,6 @@ def compare_lanczos_extended_love(
                     time_love_fit = _elapsed(t4, t5)
                     time_extend = _elapsed(t6, t7)
 
-                    print("J_ext", Q_ext.shape[-1])
-                    print("J_love", Q_love.shape[-1])
-                    print("min eig ext", torch.linalg.eigvalsh(T_ext.squeeze(0)).min())
-                    print("min eig love", torch.linalg.eigvalsh(T_love.squeeze(0)).min())
-                    print("sym ext", torch.linalg.matrix_norm(T_ext.squeeze(0) - T_ext.squeeze(0).T))
-                    print("sym love", torch.linalg.matrix_norm(T_love.squeeze(0) - T_love.squeeze(0).T))
 
                     for jitter in jitters:
                         try:

@@ -438,6 +438,24 @@ def cg_store_lanczos_basis(
 
     q_mat, r_mat = torch.linalg.qr(d_mat, mode="reduced")
 
+    rank_tol = 1e-12
+
+    diag_r = torch.diagonal(r_mat, dim1=-2, dim2=-1).abs()
+    rel_diag_r = diag_r / diag_r[..., :1].clamp_min(eps)
+
+    rel_diag_r_1d = rel_diag_r.squeeze(0)
+
+    bad = torch.nonzero(rel_diag_r_1d <= rank_tol).reshape(-1)
+
+    if bad.numel() > 0:
+        num_keep = int(bad[0].item())
+    else:
+        num_keep = rel_diag_r_1d.numel()
+
+    q_mat = q_mat[..., :, :num_keep]
+    r_mat = r_mat[..., :num_keep, :num_keep]
+    kd_mat = kd_mat[..., :, :num_keep]
+
     kq_mat = torch.linalg.solve_triangular(
         r_mat.transpose(-1, -2),
         kd_mat.transpose(-1, -2),
