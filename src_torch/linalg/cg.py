@@ -419,7 +419,7 @@ def cg_store_lanczos_basis(
             "cg_store_lanczos_basis currently supports only the unpreconditioned case."
         )
 
-    result, d_mat, kd_mat = linear_cg(
+    result, d_mat, _ = linear_cg(
         matmul_closure,
         rhs,
         n_tridiag=n_tridiag,
@@ -436,33 +436,15 @@ def cg_store_lanczos_basis(
     if d_mat.dim() != 3 or d_mat.shape[0] != 1:
         raise ValueError("This prototype currently expects d_mat with shape [1, n, J].")
 
-    q_mat, r_mat = torch.linalg.qr(d_mat, mode="reduced")
+    device = d_mat.device
 
-    rank_tol = 1e-12
-
-    diag_r = torch.diagonal(r_mat, dim1=-2, dim2=-1).abs()
-    rel_diag_r = diag_r / diag_r[..., :1].clamp_min(eps)
-
-    rel_diag_r_1d = rel_diag_r.squeeze(0)
-
-    bad = torch.nonzero(rel_diag_r_1d <= rank_tol).reshape(-1)
-
-    if bad.numel() > 0:
-        num_keep = int(bad[0].item())
+    if device.type == "cpu":
+        q_mat, _ = torch.linalg.qr(d_mat, mode="reduced")
     else:
-        num_keep = rel_diag_r_1d.numel()
+        q_mat, _ = torch.linalg.qr(d_mat.cpu(), mode="reduced")
+        q_mat = q_mat.to(device)
 
-    q_mat = q_mat[..., :, :num_keep]
-    r_mat = r_mat[..., :num_keep, :num_keep]
-    kd_mat = kd_mat[..., :, :num_keep]
-
-    kq_mat = torch.linalg.solve_triangular(
-        r_mat.transpose(-1, -2),
-        kd_mat.transpose(-1, -2),
-        upper=False,
-    ).transpose(-1, -2)
-
-    t_mat = torch.matmul(q_mat.transpose(-1, -2), kq_mat)
+    t_mat = torch.matmul(q_mat.transpose(-1, -2), matmul_closure(q_mat))
     t_mat = 0.5 * (t_mat + t_mat.transpose(-1, -2))
 
     return result, q_mat, t_mat
