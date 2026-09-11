@@ -239,6 +239,9 @@ def linear_cg(
     if save_directions:
         d_mat = rhs.new_zeros(n_iter, *batch_shape, num_rows)
         kd_mat = rhs.new_zeros(n_iter, *batch_shape, num_rows)
+        save_directions_cg = True
+    else:
+        save_directions_cg = False
 
     # Start the iteration
     for k in range(n_iter):
@@ -246,41 +249,44 @@ def linear_cg(
         # alpha_{k} = (residual_{k-1}^T precon_residual{k-1}) / (p_vec_{k-1}^T mat p_vec_{k-1})
         mvms = matmul_closure(curr_conjugate_vec)
 
-        if save_directions and k > 0:
-            d_prev = d_mat[:k]       # [k, batch, n]
-            kd_prev = kd_mat[:k]     # [k, batch, n]
+        if save_directions_cg:
+            r_copy = curr_conjugate_vec.clone()
+            mv_copy = mvms.clone()
 
-            could_reorthogonalize = False
+            if k > 0:
+                d_prev = d_mat[:k]       # [k, batch, n]
+                kd_prev = kd_mat[:k]     # [k, batch, n]
 
-            for _ in range(10):  # [batch, n]
-                dkd = torch.mul(d_prev, kd_prev).sum(dim=-1)
-                dkd_is_zero = torch.lt(dkd.abs(), eps)
-                dkd.masked_fill_(dkd_is_zero, 1.0)
+                could_reorthogonalize = False
 
-                coeffs = torch.mul(d_prev, mvms.squeeze(-1)).sum(dim=-1).div(dkd) # [k, batch]
-                coeffs.masked_fill_(dkd_is_zero, 0.0)  
+                for _ in range(10):  # [batch, n]
+                    dkd = torch.mul(d_prev, kd_prev).sum(dim=-1)
+                    dkd_is_zero = torch.lt(dkd.abs(), eps)
+                    dkd.masked_fill_(dkd_is_zero, 1.0)
 
-                curr_conjugate_vec.sub_((d_prev * coeffs.unsqueeze(-1)).sum(dim=0).unsqueeze(-1))
+                    coeffs = torch.mul(d_prev, mv_copy.squeeze(-1)).sum(dim=-1).div(dkd) # [k, batch]
+                    coeffs.masked_fill_(dkd_is_zero, 0.0)  
 
-                mvms.sub_((kd_prev * coeffs.unsqueeze(-1)).sum(dim=0).unsqueeze(-1))
+                    r_copy.sub_((d_prev * coeffs.unsqueeze(-1)).sum(dim=0).unsqueeze(-1))
 
-                inner_products = torch.mul(d_prev, mvms.squeeze(-1)).sum(dim=-1)
-                new_dkd = torch.mul(curr_conjugate_vec.squeeze(-1), mvms.squeeze(-1)).sum(dim=-1)
+                    mv_copy.sub_((kd_prev * coeffs.unsqueeze(-1)).sum(dim=0).unsqueeze(-1))
 
-                scale = torch.sqrt(torch.mul(dkd.abs(), new_dkd.abs().clamp_min(eps)))
-                rel_inner_products = torch.div(inner_products.abs(), scale.clamp_min(eps))
+                    inner_products = torch.mul(d_prev, mv_copy.squeeze(-1)).sum(dim=-1)
+                    new_dkd = torch.mul(r_copy.squeeze(-1), mv_copy.squeeze(-1)).sum(dim=-1)
 
-                if not torch.sum(rel_inner_products.abs() > tolerance):
-                    could_reorthogonalize = True
-                    break
+                    scale = torch.sqrt(torch.mul(dkd.abs(), new_dkd.abs().clamp_min(eps)))
+                    rel_inner_products = torch.div(inner_products.abs(), scale.clamp_min(eps))
 
-            if not could_reorthogonalize:
-                num_stored = k
-                break
+                    if not torch.sum(rel_inner_products.abs() > tolerance):
+                        could_reorthogonalize = True
+                        break
+
+                if not could_reorthogonalize:
+                    save_directions_cg = False
+                    num_stored = k
         
-        if save_directions:
-            d_mat[k].copy_(curr_conjugate_vec.squeeze(-1))
-            kd_mat[k].copy_(mvms.squeeze(-1))
+            d_mat[k].copy_(r_copy.squeeze(-1))
+            kd_mat[k].copy_(mv_copy.squeeze(-1))
             num_stored = k + 1
 
         if precond:
@@ -342,7 +348,6 @@ def linear_cg(
             and not (n_tridiag and k < min(n_tridiag_iter, max_iter - 1))
         ):
             tolerance_reached = True
-            num_stored = k
             break
 
         # Update tridiagonal matrices, if applicable
