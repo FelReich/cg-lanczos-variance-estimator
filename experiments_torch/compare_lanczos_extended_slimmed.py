@@ -38,7 +38,7 @@ def compare_lanczos_extended_love(
     jitters: list[float] | None = None,
     domain: tuple[float, float] = (-10.0, 10.0),
     seed: int = 123,
-    extension_tol: float = 1e-12,
+    extension_tol: float = 1e-6,
     dtype: torch.dtype = torch.float64,
     device: str | torch.device = "cpu",
 ) -> None:
@@ -82,7 +82,7 @@ def compare_lanczos_extended_love(
         "J_resid J_ext J_love "
         "total_time_ext total_time_love rel_diff_time "
         "rel_ext_exact rel_love_exact "
-        "rel_store_cg_exact rel_plain_cg_exact"
+        "cg_same_exact lanczos_same_exact compare_same"
     )
     print(header)
     print("-" * len(header))
@@ -108,7 +108,7 @@ def compare_lanczos_extended_love(
 
                     _sync_if_needed(device)
                     t0 = time.perf_counter()
-                    alpha_store, Q_resid, T_resid = cg_store_lanczos_basis(
+                    _, Q_resid, T_resid = cg_store_lanczos_basis(
                         matmul_closure,
                         rhs,
                         tolerance=1e-6,
@@ -117,9 +117,24 @@ def compare_lanczos_extended_love(
                     _sync_if_needed(device)
                     t1 = time.perf_counter()
 
+
+                    same_J = Q_resid.shape[-1]
+
+                    Q_lanczos_same, T_lanczos_same = lanczos_tridiag(
+                        matmul_closure,
+                        max_iter=same_J,
+                        dtype=dtype,
+                        device=device,
+                        matrix_shape=gp_exact.K_noise.shape,
+                        batch_shape=rhs.shape[:-2],
+                        init_vecs=rhs,
+                        num_init_vecs=1,
+                        tol=1e-6,
+                    )
+
                     _sync_if_needed(device)
                     t2 = time.perf_counter()
-                    alpha_plain = linear_cg(
+                    _ = linear_cg(
                         matmul_closure,
                         rhs,
                         tolerance=1e-6,
@@ -166,25 +181,15 @@ def compare_lanczos_extended_love(
                     Q_love_2d = Q_love.squeeze(0)
                     T_love_2d = T_love.squeeze(0)
 
+                    Q_resid_2d = Q_resid.squeeze(0)
+                    T_resid_2d = T_resid.squeeze(0)
+                    Q_lanczos_same_2d = Q_lanczos_same.squeeze(0)
+                    T_lanczos_same_2d = T_lanczos_same.squeeze(0)
+
                     time_resid_fit = t1 - t0
                     time_love_cg_fit = t3 - t2
                     time_love_fit = t5 - t4
                     time_extend = t7 - t6
-
-                    alpha_exact = torch.linalg.solve(
-                            gp_exact.K_noise,
-                            gp_exact.centered_y.unsqueeze(-1),
-                    ).reshape(-1)
-
-                    rel_store_cg_exact = (
-                        torch.linalg.vector_norm(alpha_store.reshape(-1) - alpha_exact)
-                        / torch.linalg.vector_norm(alpha_exact)
-                    )
-
-                    rel_plain_cg_exact = (
-                        torch.linalg.vector_norm(alpha_plain.reshape(-1) - alpha_exact)
-                        / torch.linalg.vector_norm(alpha_exact)
-                    )
 
                     for jitter in jitters:
                         try:
@@ -211,6 +216,27 @@ def compare_lanczos_extended_love(
                             total_time_love = time_love_cg_fit + time_love_fit + time_love_corr
                             rel_diff_time = (total_time_ext - total_time_love) / total_time_love
 
+                            cg_same_corr = love_correction(Q_resid_2d, T_resid_2d, k, jitter=jitter)
+                            lanczos_same_corr = love_correction(
+                                Q_lanczos_same_2d,
+                                T_lanczos_same_2d,
+                                k,
+                                jitter=jitter,
+                            )
+
+                            cg_same_cov = K_test - cg_same_corr
+                            lanczos_same_cov = K_test - lanczos_same_corr
+
+                            cg_same_cov = 0.5 * (cg_same_cov + cg_same_cov.transpose(-1, -2))
+                            lanczos_same_cov = 0.5 * (
+                                lanczos_same_cov + lanczos_same_cov.transpose(-1, -2)
+                            )
+
+                            rel_cg_same_exact = relative_error(cg_same_cov, exact_cov)
+                            rel_lanczos_same_exact = relative_error(lanczos_same_cov, exact_cov)
+                            rel_cg_lanczos_same = relative_error(cg_same_cov, lanczos_same_cov)
+
+
                             print(
                                 f"{lengthscale:<10.1g} "
                                 f"{noise:<10.1e} "
@@ -223,9 +249,24 @@ def compare_lanczos_extended_love(
                                 f"{rel_diff_time:<13.3e} "
                                 f"{relative_error(ext_cov, exact_cov):<13.3e} "
                                 f"{relative_error(love_cov, exact_cov):<15.3e} "
-                                f"{rel_store_cg_exact.item():<19.3e} "
-                                f"{rel_plain_cg_exact.item():<.3e}"
+                                f"{rel_cg_same_exact:<17.3e} "
+                                f"{rel_lanczos_same_exact:<16.3e} "
+                                f"{rel_cg_lanczos_same:<.3e}"
                             )
+                            """
+                            print(
+                                f"{lengthscale:<10.1g} "
+                                f"{noise:<10.1e} "
+                                f"{jitter:<9.1e} "
+                                f"{Q_resid.shape[-1]:<7d} "
+                                f"{Q_ext.shape[-1]:<5d} "
+                                f"{Q_love.shape[-1]:<7d} "
+                                f"{total_time_ext:<14.3e} "
+                                f"{total_time_love:<15.3e} "
+                                f"{rel_diff_time:<13.3e} "
+                                f"{relative_error(ext_cov, exact_cov):<13.3e} "
+                                f"{relative_error(love_cov, exact_cov):<15.3e} "
+                            )"""
 
                         except Exception as e:
                             print(
@@ -244,6 +285,6 @@ def compare_lanczos_extended_love(
 
 
 if __name__ == "__main__":
-    compare_lanczos_extended_love()
+    #compare_lanczos_extended_love()
     #compare_lanczos_extended_love(dtype=torch.float32)
-    #compare_lanczos_extended_love(device="mps", dtype=torch.float32)
+    compare_lanczos_extended_love(device="mps", dtype=torch.float32)
