@@ -81,7 +81,8 @@ def compare_lanczos_extended_love(
         "lengthscale noise      jitter    "
         "J_resid J_ext J_love "
         "total_time_ext total_time_love rel_diff_time "
-        "rel_ext_exact rel_love_exact"
+        "rel_ext_exact rel_love_exact "
+        "rel_store_cg_exact rel_plain_cg_exact"
     )
     print(header)
     print("-" * len(header))
@@ -107,7 +108,7 @@ def compare_lanczos_extended_love(
 
                     _sync_if_needed(device)
                     t0 = time.perf_counter()
-                    _, Q_resid, T_resid = cg_store_lanczos_basis(
+                    alpha_store, Q_resid, T_resid = cg_store_lanczos_basis(
                         matmul_closure,
                         rhs,
                         tolerance=1e-6,
@@ -118,7 +119,7 @@ def compare_lanczos_extended_love(
 
                     _sync_if_needed(device)
                     t2 = time.perf_counter()
-                    _ = linear_cg(
+                    alpha_plain = linear_cg(
                         matmul_closure,
                         rhs,
                         tolerance=1e-6,
@@ -170,6 +171,21 @@ def compare_lanczos_extended_love(
                     time_love_fit = t5 - t4
                     time_extend = t7 - t6
 
+                    alpha_exact = torch.linalg.solve(
+                            gp_exact.K_noise,
+                            gp_exact.centered_y.unsqueeze(-1),
+                    ).reshape(-1)
+
+                    rel_store_cg_exact = (
+                        torch.linalg.vector_norm(alpha_store.reshape(-1) - alpha_exact)
+                        / torch.linalg.vector_norm(alpha_exact)
+                    )
+
+                    rel_plain_cg_exact = (
+                        torch.linalg.vector_norm(alpha_plain.reshape(-1) - alpha_exact)
+                        / torch.linalg.vector_norm(alpha_exact)
+                    )
+
                     for jitter in jitters:
                         try:
                             _sync_if_needed(device)
@@ -206,7 +222,9 @@ def compare_lanczos_extended_love(
                                 f"{total_time_love:<15.3e} "
                                 f"{rel_diff_time:<13.3e} "
                                 f"{relative_error(ext_cov, exact_cov):<13.3e} "
-                                f"{relative_error(love_cov, exact_cov):<.3e}"
+                                f"{relative_error(love_cov, exact_cov):<15.3e} "
+                                f"{rel_store_cg_exact.item():<19.3e} "
+                                f"{rel_plain_cg_exact.item():<.3e}"
                             )
 
                         except Exception as e:
