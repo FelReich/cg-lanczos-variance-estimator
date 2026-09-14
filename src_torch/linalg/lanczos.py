@@ -123,7 +123,7 @@ def lanczos_tridiag(
             # Update q_mat with new q value
             q_mat[k + 1].copy_(r_vec)
 
-            if torch.sum(beta_curr.abs() > 1e-6) == 0 or not could_reorthogonalize:
+            if torch.sum(beta_curr.abs() > tol) == 0 or not could_reorthogonalize:
                 break
 
     # Now let's transpose q_mat, t_mat intot the correct shape
@@ -447,8 +447,8 @@ def extend_lanczos_basis(
     q_ext = q_mat.new_zeros(target_iter, *batch_shape, num_rows)
     q_ext[:current_iter].copy_(q_mat.permute(-1, *range(len(batch_shape)), -2))
 
-    t_ext = t_mat.new_zeros(target_iter, target_iter, *batch_shape)
-    t_ext[:current_iter, :current_iter].copy_(t_mat.permute(-2, -1, *range(len(batch_shape))))
+    #t_ext = t_mat.new_zeros(target_iter, target_iter, *batch_shape)
+    #t_ext[:current_iter, :current_iter].copy_(t_mat.permute(-2, -1, *range(len(batch_shape))))
 
     q = q_ext[current_iter - 1].unsqueeze(-1)
 
@@ -456,12 +456,11 @@ def extend_lanczos_basis(
 
     if r_vec.shape != q.shape:
         raise ValueError("matmul_closure must return a tensor with the same shape as the basis vectors.")
-
-    alpha_last = t_ext[current_iter - 1, current_iter - 1]
+    alpha_last = t_mat[:,current_iter - 1, current_iter - 1]
     r_vec.sub_(q.mul(alpha_last.unsqueeze(-1).unsqueeze(-1)))
 
     if current_iter > 1:
-        beta_prev = t_ext[current_iter - 2, current_iter - 1]
+        beta_prev = t_mat[:,current_iter - 2, current_iter - 1]
         q_prev = q_ext[current_iter - 2].unsqueeze(-1)
         r_vec.sub_(q_prev.mul(beta_prev.unsqueeze(-1).unsqueeze(-1)))
 
@@ -503,10 +502,10 @@ def extend_lanczos_basis(
         if torch.sum(beta.abs() > tol) == 0:
             break
 
-        beta_value = beta.squeeze(-1).squeeze(-1)
+        #beta_value = beta.squeeze(-1).squeeze(-1)
 
-        t_ext[k - 1, k] = beta_value
-        t_ext[k, k - 1] = beta_value
+        #t_ext[k - 1, k] = beta_value
+        #t_ext[k, k - 1] = beta_value
 
         q_prev = q
         q = r_vec.div(beta)
@@ -517,7 +516,7 @@ def extend_lanczos_basis(
         r_vec = matmul_closure(q)
 
         alpha = torch.sum(q * r_vec, dim=dim_dimension, keepdim=True)
-        t_ext[k, k].copy_(alpha.squeeze(-1).squeeze(-1))
+        #t_ext[k, k].copy_(alpha.squeeze(-1).squeeze(-1))
 
         r_vec.sub_(q.mul(alpha))
         r_vec.sub_(q_prev.mul(beta))
@@ -530,8 +529,7 @@ def extend_lanczos_basis(
 
         r_vec_norm = torch.linalg.vector_norm(r_vec, ord=2, dim=dim_dimension, keepdim=True)
 
-        r_vec.div_(r_vec_norm)
-        inner_products = q_prev_all.unsqueeze(-1).mul(r_vec.unsqueeze(0)).sum(dim_dimension)
+        inner_products = q_prev_all.unsqueeze(-1).mul(r_vec.div(r_vec_norm).unsqueeze(0)).sum(dim_dimension)
 
         could_reorthogonalize = False
 
@@ -546,8 +544,7 @@ def extend_lanczos_basis(
 
             r_vec_norm = torch.linalg.vector_norm(r_vec, ord=2, dim=dim_dimension, keepdim=True)
 
-            r_vec.div_(r_vec_norm)
-            inner_products = q_prev_all.unsqueeze(-1).mul(r_vec.unsqueeze(0)).sum(dim_dimension)
+            inner_products = q_prev_all.unsqueeze(-1).mul(r_vec.div(r_vec_norm).unsqueeze(0)).sum(dim_dimension)
 
 
         if not could_reorthogonalize:

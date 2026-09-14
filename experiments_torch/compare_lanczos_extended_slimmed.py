@@ -28,17 +28,16 @@ def _sync_if_needed(device: torch.device) -> None:
 
 def compare_lanczos_extended_love(
     *,
-    n: int = 10000,
-    m: int = 1000,
-    cg_J: int = 300,
-    lanczos_J: int = 300,
+    n: int = 1000,
+    m: int = 100,
+    cg_J: int = 500,
+    lanczos_J: int = 500,
     outputscale: float = 1.0,
     lengthscales: list[float] | None = None,
     noises: list[float] | None = None,
     jitters: list[float] | None = None,
     domain: tuple[float, float] = (-10.0, 10.0),
     seed: int = 123,
-    extension_tol: float = 1e-6,
     dtype: torch.dtype = torch.float64,
     device: str | torch.device = "cpu",
 ) -> None:
@@ -50,6 +49,11 @@ def compare_lanczos_extended_love(
 
     if jitters is None:
         jitters = [1e-8, 1e-6, 1e-4]
+
+    if dtype == torch.float64:
+        tol = 1e-6
+    else:
+        tol = 1e-3
 
     device = torch.device(device)
 
@@ -154,12 +158,13 @@ def compare_lanczos_extended_love(
                         batch_shape=rhs.shape[:-2],
                         init_vecs=rhs,
                         num_init_vecs=1,
-                        tol=1e-6,
+                        tol=tol,
                     )
                     _sync_if_needed(device)
                     t5 = time.perf_counter()
 
-                    target_J = max(Q_resid.shape[-1], Q_love.shape[-1])
+                    #target_J = max(Q_resid.shape[-1], Q_love.shape[-1])
+                    target_J = lanczos_J
 
                     _sync_if_needed(device)
                     t6 = time.perf_counter()
@@ -171,7 +176,7 @@ def compare_lanczos_extended_love(
                         matrix_shape=gp_exact.K_noise.shape,
                         q_mat=Q_resid,
                         t_mat=T_resid,
-                        tol=extension_tol,
+                        tol=tol,
                     )
                     _sync_if_needed(device)
                     t7 = time.perf_counter()
@@ -286,5 +291,5 @@ def compare_lanczos_extended_love(
 
 if __name__ == "__main__":
     compare_lanczos_extended_love()
-    #compare_lanczos_extended_love(dtype=torch.float32)
+    compare_lanczos_extended_love(dtype=torch.float32)
     #compare_lanczos_extended_love(device="mps", dtype=torch.float32)

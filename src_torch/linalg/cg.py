@@ -405,6 +405,9 @@ def linear_cg(
         residual_norm.masked_fill_(rhs_is_zero, 0)
         torch.lt(residual_norm, stop_updating_after, out=has_converged)
 
+        if residual_norm/rhs_norm < tolerance:
+            save_directions_cg = False
+        
         if (
             k >= min(10, max_iter - 1)
             and bool(residual_norm.mean() < tolerance)
