@@ -13,11 +13,21 @@ def love_correction(
     T: torch.Tensor,
     k: torch.Tensor,
     jitter: float = 1e-6,
+    max_tries: int = 5,
 ) -> torch.Tensor:
     # Computes a LOVE-style covariance reduction term from a basis and projected matrix.
-    T_jittered = T + jitter * torch.eye(T.shape[0], dtype=T.dtype, device=T.device)
+    eye = torch.eye(T.shape[0], dtype=T.dtype, device=T.device)
 
-    L = torch.linalg.cholesky(T_jittered)
-    Z = torch.linalg.solve_triangular(L, Q.T @ k, upper=False)
+    for i in range(max_tries):
+        jitter_i = jitter * (10**i)
+        T_jittered = T + jitter_i * eye
 
-    return Z.T @ Z
+        L = torch.linalg.cholesky(T_jittered)
+        Z = torch.linalg.solve_triangular(L, Q.T @ k, upper=False)
+
+        return Z.T @ Z
+
+    raise RuntimeError(
+        f"Cholesky failed after {max_tries} tries. "
+        f"Last jitter was {jitter * (10.0 ** (max_tries - 1)):.1e}."
+    )

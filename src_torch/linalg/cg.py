@@ -92,6 +92,55 @@ def _jit_linear_cg_updates_no_precond(
     )
 
 
+@torch.jit.script
+def _jit_linear_cg_updates_save_directions(
+    mvms,
+    result,
+    has_converged,
+    alpha,
+    residual_inner_prod,
+    eps,
+    beta,
+    residual,
+    precond_residual,
+    mul_storage,
+    is_zero,
+    curr_conjugate_vec,
+):
+    torch.mul(curr_conjugate_vec, mvms, out=mul_storage)
+    torch.sum(mul_storage, dim=-2, keepdim=True, out=alpha)
+
+    # Do a safe division here
+    torch.lt(alpha, eps, out=is_zero)
+    alpha.masked_fill_(is_zero, 1)
+    torch.div(torch.mul(residual, curr_conjugate_vec).sum(dim=-2, keepdim=True), alpha, out=alpha)
+    alpha.masked_fill_(is_zero, 0)
+
+    # We'll cancel out any updates by setting alpha=0 for any vector that has already converged
+    alpha.masked_fill_(has_converged, 0)
+
+    # Update residual
+    # residual_{k} = residual_{k-1} - alpha_{k} mat p_vec_{k-1}
+    torch.addcmul(residual, -alpha, mvms, out=residual)
+
+    # Update precond_residual
+    # precon_residual{k} = M^-1 residual_{k}
+    precond_residual = residual.clone()
+
+    _jit_linear_cg_updates(
+        result,
+        alpha,
+        residual_inner_prod,
+        eps,
+        beta,
+        residual,
+        precond_residual,
+        mul_storage,
+        is_zero,
+        curr_conjugate_vec,
+    )
+
+
 def linear_cg(
     matmul_closure,
     rhs,
@@ -250,8 +299,6 @@ def linear_cg(
         mvms = matmul_closure(curr_conjugate_vec)
 
         if save_directions_cg:
-            r_copy = curr_conjugate_vec.clone()
-            mv_copy = mvms.clone()
 
             if k > 0:
                 d_prev = d_mat[:k]       # [k, batch, n]
@@ -264,15 +311,15 @@ def linear_cg(
                     dkd_is_zero = torch.lt(dkd.abs(), eps)
                     dkd.masked_fill_(dkd_is_zero, 1.0)
 
-                    coeffs = torch.mul(d_prev, mv_copy.squeeze(-1)).sum(dim=-1).div(dkd) # [k, batch]
+                    coeffs = torch.mul(d_prev, mvms.squeeze(-1)).sum(dim=-1).div(dkd) # [k, batch]
                     coeffs.masked_fill_(dkd_is_zero, 0.0)  
 
-                    r_copy.sub_((d_prev * coeffs.unsqueeze(-1)).sum(dim=0).unsqueeze(-1))
+                    curr_conjugate_vec.sub_((d_prev * coeffs.unsqueeze(-1)).sum(dim=0).unsqueeze(-1))
 
-                    mv_copy.sub_((kd_prev * coeffs.unsqueeze(-1)).sum(dim=0).unsqueeze(-1))
+                    mvms.sub_((kd_prev * coeffs.unsqueeze(-1)).sum(dim=0).unsqueeze(-1))
 
-                    inner_products = torch.mul(d_prev, mv_copy.squeeze(-1)).sum(dim=-1)
-                    new_dkd = torch.mul(r_copy.squeeze(-1), mv_copy.squeeze(-1)).sum(dim=-1)
+                    inner_products = torch.mul(d_prev, mvms.squeeze(-1)).sum(dim=-1)
+                    new_dkd = torch.mul(curr_conjugate_vec.squeeze(-1), mvms.squeeze(-1)).sum(dim=-1)
 
                     scale = torch.sqrt(torch.mul(dkd.abs(), new_dkd.abs().clamp_min(eps)))
                     rel_inner_products = torch.div(inner_products.abs(), scale.clamp_min(eps))
@@ -285,8 +332,8 @@ def linear_cg(
                     save_directions_cg = False
                     num_stored = k
         
-            d_mat[k].copy_(r_copy.squeeze(-1))
-            kd_mat[k].copy_(mv_copy.squeeze(-1))
+            d_mat[k].copy_(curr_conjugate_vec.squeeze(-1))
+            kd_mat[k].copy_(mvms.squeeze(-1))
             num_stored = k + 1
 
         if precond:
@@ -323,20 +370,36 @@ def linear_cg(
                 curr_conjugate_vec,
             )
         else:
-            _jit_linear_cg_updates_no_precond(
-                mvms,
-                result,
-                has_converged,
-                alpha,
-                residual_inner_prod,
-                eps,
-                beta,
-                residual,
-                precond_residual,
-                mul_storage,
-                is_zero,
-                curr_conjugate_vec,
-            )
+            if save_directions_cg:
+                _jit_linear_cg_updates_save_directions(
+                    mvms,
+                    result,
+                    has_converged,
+                    alpha,
+                    residual_inner_prod,
+                    eps,
+                    beta,
+                    residual,
+                    precond_residual,
+                    mul_storage,
+                    is_zero,
+                    curr_conjugate_vec,
+                )
+            else:
+                _jit_linear_cg_updates_no_precond(
+                    mvms,
+                    result,
+                    has_converged,
+                    alpha,
+                    residual_inner_prod,
+                    eps,
+                    beta,
+                    residual,
+                    precond_residual,
+                    mul_storage,
+                    is_zero,
+                    curr_conjugate_vec,
+                )
 
         torch.linalg.vector_norm(residual, ord=2, dim=-2, keepdim=True, out=residual_norm)
         residual_norm.masked_fill_(rhs_is_zero, 0)
@@ -393,8 +456,8 @@ def linear_cg(
 
     if save_directions:
         d_mat = d_mat[:num_stored].permute(*range(1, 1 + len(batch_shape)), -1, 0).contiguous()
-        kd_mat = kd_mat[:num_stored].permute(*range(1, 1 + len(batch_shape)), -1, 0).contiguous()
-        return result, d_mat, kd_mat
+        #kd_mat = kd_mat[:num_stored].permute(*range(1, 1 + len(batch_shape)), -1, 0).contiguous()
+        return result, d_mat#, kd_mat
 
     if n_tridiag:
         t_mat = t_mat[: last_tridiag_iter + 1, : last_tridiag_iter + 1]
@@ -424,7 +487,7 @@ def cg_store_lanczos_basis(
             "cg_store_lanczos_basis currently supports only the unpreconditioned case."
         )
 
-    result, d_mat, _ = linear_cg(
+    result, d_mat = linear_cg(
         matmul_closure,
         rhs,
         n_tridiag=n_tridiag,

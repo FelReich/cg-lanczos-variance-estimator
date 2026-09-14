@@ -30,8 +30,8 @@ def compare_lanczos_extended_love(
     *,
     n: int = 10000,
     m: int = 1000,
-    cg_J: int = 100,
-    lanczos_J: int = 100,
+    cg_J: int = 300,
+    lanczos_J: int = 300,
     outputscale: float = 1.0,
     lengthscales: list[float] | None = None,
     noises: list[float] | None = None,
@@ -285,6 +285,6 @@ def compare_lanczos_extended_love(
 
 
 if __name__ == "__main__":
-    #compare_lanczos_extended_love()
+    compare_lanczos_extended_love()
     #compare_lanczos_extended_love(dtype=torch.float32)
-    compare_lanczos_extended_love(device="mps", dtype=torch.float32)
+    #compare_lanczos_extended_love(device="mps", dtype=torch.float32)
