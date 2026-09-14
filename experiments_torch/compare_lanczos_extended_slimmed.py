@@ -28,8 +28,8 @@ def _sync_if_needed(device: torch.device) -> None:
 
 def compare_lanczos_extended_love(
     *,
-    n: int = 1000,
-    m: int = 100,
+    n: int = 10000,
+    m: int = 1000,
     cg_J: int = 500,
     lanczos_J: int = 500,
     outputscale: float = 1.0,
@@ -291,5 +291,5 @@ def compare_lanczos_extended_love(
 
 if __name__ == "__main__":
     compare_lanczos_extended_love()
-    compare_lanczos_extended_love(dtype=torch.float32)
+    #compare_lanczos_extended_love(dtype=torch.float32)
     #compare_lanczos_extended_love(device="mps", dtype=torch.float32)

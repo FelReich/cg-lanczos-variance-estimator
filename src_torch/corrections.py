@@ -22,10 +22,12 @@ def love_correction(
         jitter_i = jitter * (10**i)
         T_jittered = T + jitter_i * eye
 
-        L = torch.linalg.cholesky(T_jittered)
-        Z = torch.linalg.solve_triangular(L, Q.T @ k, upper=False)
+        L, info = torch.linalg.cholesky_ex(T_jittered)
+        
+        if not torch.any(info):
+            Z = torch.linalg.solve_triangular(L, Q.T @ k, upper=False)
 
-        return Z.T @ Z
+            return Z.T @ Z
 
     raise RuntimeError(
         f"Cholesky failed after {max_tries} tries. "
