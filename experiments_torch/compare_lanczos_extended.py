@@ -154,7 +154,7 @@ def compare_lanczos_extended_love(
 
                     _sync_if_needed(device)
                     t0 = time.perf_counter()
-                    _, Q_resid, T_resid = cg_store_lanczos_basis(
+                    _, Q_resid = cg_store_lanczos_basis(
                         lambda v: torch.matmul(gp_exact.K_noise, v),
                         rhs,
                         tolerance=1e-5,
@@ -200,7 +200,6 @@ def compare_lanczos_extended_love(
                         device=device,
                         matrix_shape=gp_exact.K_noise.shape,
                         q_mat=Q_resid,
-                        t_mat=T_resid,
                         tol=extension_tol,
                     )
                     _sync_if_needed(device)
