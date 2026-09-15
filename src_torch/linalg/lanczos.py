@@ -565,7 +565,6 @@ def extend_lanczos_basis(
     device,
     matrix_shape,
     q_mat,
-    t_mat,
     tol=1e-6,
 ):
     if not callable(matmul_closure):
@@ -574,13 +573,9 @@ def extend_lanczos_basis(
         )
 
     q_mat = q_mat.to(dtype=dtype, device=device)
-    t_mat = t_mat.to(dtype=dtype, device=device)
 
     if q_mat.dim() != 3:
         raise ValueError("This prototype expects q_mat with shape [batch, n, J].")
-
-    if t_mat.dim() != 3:
-        raise ValueError("This prototype expects t_mat with shape [batch, J, J].")
 
     batch_shape = q_mat.shape[:-2]
     num_rows = q_mat.size(-2)
@@ -593,16 +588,13 @@ def extend_lanczos_basis(
 
     if current_iter == 0:
         raise ValueError("q_mat must contain at least one basis vector.")
-
-    if t_mat.shape != (*batch_shape, current_iter, current_iter):
-        raise ValueError("t_mat must have shape [batch, J, J].")
-
+    
     if target_iter <= 0:
         raise ValueError("max_iter must be positive.")
 
     if target_iter <= current_iter:
         q_final = q_mat[..., :, :target_iter].contiguous()
-        t_final = t_mat[..., :target_iter, :target_iter].contiguous()
+        t_final = torch.matmul(q_final.transpose(-1,-2), matmul_closure(q_final))
         return q_final, 0.5 * (t_final + t_final.transpose(-1, -2))
 
     q_ext = q_mat.new_zeros(target_iter, *batch_shape, num_rows)
@@ -614,13 +606,14 @@ def extend_lanczos_basis(
 
     if r_vec.shape != q.shape:
         raise ValueError("matmul_closure must return a tensor with the same shape as the basis vectors.")
-    alpha_last = t_mat[:,current_iter - 1, current_iter - 1]
-    r_vec.sub_(q.mul(alpha_last.unsqueeze(-1).unsqueeze(-1)))
+    Kq_last = matmul_closure(q_mat[:, :, current_iter - 1 : current_iter])
+    alpha_last = torch.matmul(q_mat[:, :, current_iter - 1 : current_iter].transpose(-1,-2), Kq_last)
+    r_vec.sub_(q.mul(alpha_last))
 
     if current_iter > 1:
-        beta_prev = t_mat[:,current_iter - 2, current_iter - 1]
+        beta_prev = torch.matmul(q_mat[:, :, current_iter - 2 : current_iter - 1].transpose(-1,-2), Kq_last)
         q_prev = q_ext[current_iter - 2].unsqueeze(-1)
-        r_vec.sub_(q_prev.mul(beta_prev.unsqueeze(-1).unsqueeze(-1)))
+        r_vec.sub_(q_prev.mul(beta_prev))
 
     q_prev_all = q_ext[: current_iter]
 

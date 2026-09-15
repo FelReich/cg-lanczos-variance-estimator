@@ -508,10 +508,7 @@ def cg_store_lanczos_basis(
 
     q_mat, _ = torch.linalg.qr(d_mat, mode="reduced")
 
-    t_mat = torch.matmul(q_mat.transpose(-1, -2), matmul_closure(q_mat))
-    t_mat = 0.5 * (t_mat + t_mat.transpose(-1, -2))
-
-    return result, q_mat, t_mat
+    return result, q_mat
 
 
 
