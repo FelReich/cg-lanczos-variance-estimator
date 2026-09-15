@@ -1,16 +1,9 @@
-import sys
+from __future__ import annotations
+
 import time
 import warnings
-from pathlib import Path
 
 import torch
-
-warnings.filterwarnings("ignore", message="CG terminated.*")
-warnings.filterwarnings("ignore", message="Failed to initialize NumPy.*")
-
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
 
 from src_torch.gp import GP
 from src_torch.kernels import RBFKernel
@@ -29,23 +22,12 @@ def sync_if_needed(device: torch.device) -> None:
         torch.mps.synchronize()
 
 
-def timed(label, device, fn):
+def timed(device: torch.device, fn):
     sync_if_needed(device)
     start = time.perf_counter()
     out = fn()
     sync_if_needed(device)
-    end = time.perf_counter()
-    return out, end - start
-
-
-def matmul_basis(matmul_closure, q_mat):
-    kq_mat = torch.empty_like(q_mat)
-
-    for j in range(q_mat.size(-1)):
-        q_j = q_mat[..., :, j : j + 1]
-        kq_mat[..., :, j : j + 1].copy_(matmul_closure(q_j))
-
-    return kq_mat
+    return out, time.perf_counter() - start
 
 
 def relative_error(approx, exact):
@@ -68,7 +50,6 @@ def run_case(
 
     X_train = torch.linspace(-3.0, 3.0, n_train, device=device, dtype=dtype).unsqueeze(-1)
     y_train = torch.sin(X_train.squeeze(-1))
-
     X_test = torch.linspace(-2.5, 2.5, n_test, device=device, dtype=dtype).unsqueeze(-1)
 
     kernel = RBFKernel(lengthscale=lengthscale, outputscale=1.0)
@@ -92,8 +73,7 @@ def run_case(
     print("-" * 80)
 
     # EXT path
-    (res_store, Q_resid, KQ_resid), t_cg_store = timed(
-        "cg_store",
+    (res_store, Q_resid), t_cg_store = timed(
         device,
         lambda: cg_store_lanczos_basis(
             matmul_closure,
@@ -105,14 +85,7 @@ def run_case(
         ),
     )
 
-    (_, t_resid_build) = timed(
-        "T_resid",
-        device,
-        lambda: torch.matmul(Q_resid.transpose(-1, -2), KQ_resid),
-    )
-
     (Q_ext, T_ext), t_extend = timed(
-        "extend",
         device,
         lambda: extend_lanczos_basis(
             matmul_closure,
@@ -121,20 +94,22 @@ def run_case(
             device,
             K_noise.shape,
             Q_resid,
-            KQ_resid,
             tol=1e-12 if dtype == torch.float64 else 1e-6,
         ),
     )
 
     ext_cov, t_ext_corr = timed(
-        "ext_correction",
         device,
-        lambda: K_test - love_correction(Q_ext.squeeze(0), T_ext.squeeze(0), k, jitter=jitter),
+        lambda: K_test - love_correction(
+            Q_ext.squeeze(0),
+            T_ext.squeeze(0),
+            k,
+            jitter=jitter,
+        ),
     )
 
     # LOVE path
     (Q_love, T_love), t_love_basis = timed(
-        "love_basis",
         device,
         lambda: lanczos_tridiag(
             matmul_closure,
@@ -150,12 +125,16 @@ def run_case(
     )
 
     love_cov, t_love_corr = timed(
-        "love_correction",
         device,
-        lambda: K_test - love_correction(Q_love.squeeze(0), T_love.squeeze(0), k, jitter=jitter),
+        lambda: K_test - love_correction(
+            Q_love.squeeze(0),
+            T_love.squeeze(0),
+            k,
+            jitter=jitter,
+        ),
     )
 
-    total_ext = t_cg_store + t_resid_build + t_extend + t_ext_corr
+    total_ext = t_cg_store + t_extend + t_ext_corr
     total_love = t_love_basis + t_love_corr
 
     print(f"J_resid: {Q_resid.shape[-1]}")
@@ -163,21 +142,20 @@ def run_case(
     print(f"J_love:  {Q_love.shape[-1]}")
     print()
     print("EXT timings")
-    print(f"  cg_store:       {t_cg_store:.4e}")
-    print(f"  T_resid_build:  {t_resid_build:.4e}")
-    print(f"  extend:         {t_extend:.4e}")
-    print(f"  correction:     {t_ext_corr:.4e}")
-    print(f"  total:          {total_ext:.4e}")
+    print(f"  cg_store:    {t_cg_store:.4e}")
+    print(f"  extend:      {t_extend:.4e}")
+    print(f"  correction:  {t_ext_corr:.4e}")
+    print(f"  total:       {total_ext:.4e}")
     print()
     print("LOVE timings")
-    print(f"  basis:          {t_love_basis:.4e}")
-    print(f"  correction:     {t_love_corr:.4e}")
-    print(f"  total:          {total_love:.4e}")
+    print(f"  basis:       {t_love_basis:.4e}")
+    print(f"  correction:  {t_love_corr:.4e}")
+    print(f"  total:       {total_love:.4e}")
     print()
     print("accuracy")
-    print(f"  rel_ext_exact:  {relative_error(ext_cov, exact_cov):.4e}")
-    print(f"  rel_love_exact: {relative_error(love_cov, exact_cov):.4e}")
-    print(f"  rel_diff_time:  {(total_ext - total_love) / total_love:.4e}")
+    print(f"  rel_ext_exact:   {relative_error(ext_cov, exact_cov):.4e}")
+    print(f"  rel_love_exact:  {relative_error(love_cov, exact_cov):.4e}")
+    print(f"  rel_diff_time:   {(total_ext - total_love) / total_love:.4e}")
 
 
 def main():
@@ -203,4 +181,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
