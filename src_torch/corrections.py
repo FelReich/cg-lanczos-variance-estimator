@@ -8,7 +8,7 @@ def exact_correction(K_noise: torch.Tensor, k: torch.Tensor) -> torch.Tensor:
     return k.T @ torch.linalg.solve(K_noise, k)
 
 
-def love_correction(
+def love_correction_old(
     Q: torch.Tensor,
     T: torch.Tensor,
     k: torch.Tensor,
@@ -33,3 +33,29 @@ def love_correction(
         f"Cholesky failed after {max_tries} tries. "
         f"Last jitter was {jitter * (10.0 ** (max_tries - 1)):.1e}."
     )
+
+
+def love_correction(
+    Q: torch.Tensor,
+    T: torch.Tensor,
+    k: torch.Tensor,
+    jitter: float = 1e-6,
+) -> torch.Tensor:
+    # Computes a LOVE-style covariance reduction term from a basis and projected matrix.
+    diag = torch.diagonal(T, dim1=-2, dim2=-1)
+    mins = diag.min(dim=-1, keepdim=True).values.unsqueeze(-1)
+
+    eye = torch.eye(T.size(-1), dtype=T.dtype, device=T.device)
+    jitter_mat = jitter * mins * eye.expand_as(T)
+
+    evals, evecs = torch.linalg.eigh(T + jitter_mat)
+
+    mask = evals.ge(0)
+    evecs = evecs * mask.type_as(evecs).unsqueeze(-2)
+    evals = evals.masked_fill_(~mask, 1)
+
+    inv_root = Q.matmul(evecs) / evals.sqrt().unsqueeze(-2)
+
+    Z = inv_root.transpose(-1, -2) @ k
+    return Z.transpose(-1, -2) @ Z
+
