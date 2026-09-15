@@ -459,8 +459,7 @@ def linear_cg(
 
     if save_directions:
         d_mat = d_mat[:num_stored].permute(*range(1, 1 + len(batch_shape)), -1, 0).contiguous()
-        #kd_mat = kd_mat[:num_stored].permute(*range(1, 1 + len(batch_shape)), -1, 0).contiguous()
-        return result, d_mat#, kd_mat
+        return result, d_mat
 
     if n_tridiag:
         t_mat = t_mat[: last_tridiag_iter + 1, : last_tridiag_iter + 1]
@@ -507,13 +506,7 @@ def cg_store_lanczos_basis(
     if d_mat.dim() != 3 or d_mat.shape[0] != 1:
         raise ValueError("This prototype currently expects d_mat with shape [1, n, J].")
 
-    device = d_mat.device
-
-    if device.type == "cpu":
-        q_mat, _ = torch.linalg.qr(d_mat, mode="reduced")
-    else:
-        q_mat, _ = torch.linalg.qr(d_mat.cpu(), mode="reduced")
-        q_mat = q_mat.to(device)
+    q_mat, _ = torch.linalg.qr(d_mat, mode="reduced")
 
     t_mat = torch.matmul(q_mat.transpose(-1, -2), matmul_closure(q_mat))
     t_mat = 0.5 * (t_mat + t_mat.transpose(-1, -2))
