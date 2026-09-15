@@ -600,18 +600,20 @@ def extend_lanczos_basis(
     q_ext = q_mat.new_zeros(target_iter, *batch_shape, num_rows)
     q_ext[:current_iter].copy_(q_mat.permute(-1, *range(len(batch_shape)), -2))
 
+    t_ext = q_mat.new_zeros(target_iter, target_iter, *batch_shape)
+    t_ext[:current_iter, :current_iter].copy_(torch.matmul(q_mat.transpose(-1,-2), matmul_closure(q_mat)).permute(-2, -1, *range(len(batch_shape))))
+
     q = q_ext[current_iter - 1].unsqueeze(-1)
 
     r_vec = matmul_closure(q)
 
     if r_vec.shape != q.shape:
         raise ValueError("matmul_closure must return a tensor with the same shape as the basis vectors.")
-    Kq_last = matmul_closure(q_mat[:, :, current_iter - 1 : current_iter])
-    alpha_last = torch.matmul(q_mat[:, :, current_iter - 1 : current_iter].transpose(-1,-2), Kq_last)
+    alpha_last = t_ext[current_iter - 1, current_iter - 1]
     r_vec.sub_(q.mul(alpha_last))
 
     if current_iter > 1:
-        beta_prev = torch.matmul(q_mat[:, :, current_iter - 2 : current_iter - 1].transpose(-1,-2), Kq_last)
+        beta_prev = t_ext[current_iter - 2, current_iter - 1]
         q_prev = q_ext[current_iter - 2].unsqueeze(-1)
         r_vec.sub_(q_prev.mul(beta_prev))
 
@@ -650,6 +652,10 @@ def extend_lanczos_basis(
     for k in range(current_iter, target_iter):
         beta = torch.linalg.vector_norm(r_vec, ord=2, dim=dim_dimension, keepdim=True)
 
+        beta_value = beta.squeeze(-1).squeeze(-1)
+        t_ext[current_iter - 1, current_iter].copy_(beta_value)
+        t_ext[current_iter, current_iter - 1].copy_(beta_value)
+
         if torch.sum(beta.abs() > tol) == 0:
             break
         q_prev = q
@@ -661,6 +667,9 @@ def extend_lanczos_basis(
         r_vec = matmul_closure(q)
 
         alpha = torch.sum(q * r_vec, dim=dim_dimension, keepdim=True)
+
+        alpha_value = alpha.squeeze(-1).squeeze(-1)
+        t_ext[k, k].copy_(alpha_value)
 
         r_vec.sub_(q.mul(alpha))
         r_vec.sub_(q_prev.mul(beta))
@@ -696,6 +705,6 @@ def extend_lanczos_basis(
 
     q_final = q_ext[:num_iter].permute(*range(1, 1 + len(batch_shape)), -1, 0).contiguous()
 
-    t_final = torch.matmul(q_final.transpose(-1,-2), matmul_closure(q_final))
+    t_final = t_ext[:num_iter, :num_iter].permute(*range(2, 2 + len(batch_shape)), 0, 1).contiguous()
 
     return q_final, 0.5 * (t_final + t_final.transpose(-1, -2))
