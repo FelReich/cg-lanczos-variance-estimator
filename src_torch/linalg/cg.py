@@ -407,7 +407,7 @@ def linear_cg(
         residual_norm.masked_fill_(rhs_is_zero, 0)
         torch.lt(residual_norm, stop_updating_after, out=has_converged)
 
-        if residual_norm/rhs_norm < tolerance:
+        if residual_norm/rhs_norm < tolerance: #Use a new tolerance here; you want to be able to disable this extra criterion without affecting anything else
             save_directions_cg = False
             tolerance_reached = True
             break
