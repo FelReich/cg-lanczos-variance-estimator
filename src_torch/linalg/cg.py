@@ -296,8 +296,10 @@ def linear_cg(
     for k in range(n_iter):
         # Get next alpha
         # alpha_{k} = (residual_{k-1}^T precon_residual{k-1}) / (p_vec_{k-1}^T mat p_vec_{k-1})
+        mvms = matmul_closure(curr_conjugate_vec)
 
-        if save_directions_cg and k > 0:
+        if save_directions_cg:
+            if k > 0: 
                 d_prev = d_mat[:k]       # [k, batch, n]
                 kd_prev = kd_mat[:k]     # [k, batch, n]
 
@@ -312,10 +314,11 @@ def linear_cg(
                     coeffs.masked_fill_(dkd_is_zero, 0.0)  
 
                     curr_conjugate_vec.sub_((d_prev * coeffs.unsqueeze(-1)).sum(dim=0).unsqueeze(-1))
+                    mvms.sub_((kd_prev * coeffs.unsqueeze(-1)).sum(dim=0).unsqueeze(-1))
 
                     inner_products = torch.mul(kd_prev, curr_conjugate_vec.squeeze(-1)).sum(dim=-1)
 
-                    scale = torch.sqrt(dkd.abs()) * torch.linalg.vector_norm(curr_conjugate_vec.squeeze(-1), ord=2, dim=-1).clamp_min(eps)
+                    scale = torch.sqrt(torch.matmul(dkd.abs(), torch.mul(curr_conjugate_vec.squeeze(-1), mvms.squeeze(-1)).sum(dim=-1)))
                     rel_inner_products = torch.div(inner_products.abs(), scale.clamp_min(eps))
 
                     if not torch.sum(rel_inner_products.abs() > tolerance):
@@ -327,10 +330,7 @@ def linear_cg(
                     num_stored = k
                     tolerance_reached = True
                     break
-        
-        mvms = matmul_closure(curr_conjugate_vec)
-            
-        if save_directions_cg:
+
             d_mat[k].copy_(curr_conjugate_vec.squeeze(-1))
             kd_mat[k].copy_(mvms.squeeze(-1))
             num_stored = k + 1
@@ -510,10 +510,9 @@ def cg_store_lanczos_basis(
 
     q_mat, r_mat = torch.linalg.qr(d_mat, mode="reduced")
 
-    #kq_mat_t = torch.linalg.solve(r_mat.transpose(-1,-2), kd_mat.transpose(-1,-2))
+    kq_mat_t = torch.linalg.solve(r_mat.transpose(-1,-2), kd_mat.transpose(-1,-2))
 
-    #t_mat = kq_mat_t.matmul(q_mat)
-    t_mat = torch.matmul(q_mat.transpose(-1,-2), matmul_closure(q_mat))
+    t_mat = kq_mat_t.matmul(q_mat)
 
     return result, q_mat, t_mat
 

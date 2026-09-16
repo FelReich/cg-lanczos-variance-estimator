@@ -262,5 +262,5 @@ def compare_lanczos_extended_love(
 
 if __name__ == "__main__":
     compare_lanczos_extended_love()
-    #compare_lanczos_extended_love(dtype=torch.float32)
+    compare_lanczos_extended_love(dtype=torch.float32)
     #compare_lanczos_extended_love(device="mps", dtype=torch.float32)
