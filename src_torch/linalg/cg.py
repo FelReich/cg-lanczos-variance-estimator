@@ -318,8 +318,9 @@ def linear_cg(
 
                     inner_products = torch.mul(kd_prev, curr_conjugate_vec.squeeze(-1)).sum(dim=-1)
 
-                    scale = torch.sqrt(torch.matmul(dkd.abs(), torch.mul(curr_conjugate_vec.squeeze(-1), mvms.squeeze(-1)).sum(dim=-1)))
-                    rel_inner_products = torch.div(inner_products.abs(), scale.clamp_min(eps))
+                    new_dkd = torch.mul(curr_conjugate_vec.squeeze(-1), mvms.squeeze(-1)).sum(dim=-1)
+                    scale = torch.sqrt(torch.matmul(dkd.abs(), new_dkd.abs()))
+                    rel_inner_products = inner_products.abs().div(scale.clamp_min(eps))
 
                     if not torch.sum(rel_inner_products.abs() > tolerance):
                         could_reorthogonalize = True
