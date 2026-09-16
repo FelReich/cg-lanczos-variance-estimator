@@ -112,7 +112,7 @@ def compare_lanczos_extended_love(
 
                     _sync_if_needed(device)
                     t0 = time.perf_counter()
-                    res_cg, Q_resid = cg_store_lanczos_basis(
+                    res_cg, Q_resid, T_resid = cg_store_lanczos_basis(
                         matmul_closure,
                         rhs,
                         tolerance=1e-6,
@@ -160,6 +160,7 @@ def compare_lanczos_extended_love(
                         device=device,
                         matrix_shape=gp_exact.K_noise.shape,
                         q_mat=Q_resid,
+                        t_mat=T_resid,
                         tol=tol,
                     )
                     _sync_if_needed(device)
@@ -261,5 +262,5 @@ def compare_lanczos_extended_love(
 
 if __name__ == "__main__":
     compare_lanczos_extended_love()
-    compare_lanczos_extended_love(dtype=torch.float32)
+    #compare_lanczos_extended_love(dtype=torch.float32)
     #compare_lanczos_extended_love(device="mps", dtype=torch.float32)

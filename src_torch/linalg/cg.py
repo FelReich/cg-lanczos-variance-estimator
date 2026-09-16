@@ -296,11 +296,8 @@ def linear_cg(
     for k in range(n_iter):
         # Get next alpha
         # alpha_{k} = (residual_{k-1}^T precon_residual{k-1}) / (p_vec_{k-1}^T mat p_vec_{k-1})
-        mvms = matmul_closure(curr_conjugate_vec)
 
-        if save_directions_cg:
-
-            if k > 0:
+        if save_directions_cg and k > 0:
                 d_prev = d_mat[:k]       # [k, batch, n]
                 kd_prev = kd_mat[:k]     # [k, batch, n]
 
@@ -311,17 +308,14 @@ def linear_cg(
                     dkd_is_zero = torch.lt(dkd.abs(), eps)
                     dkd.masked_fill_(dkd_is_zero, 1.0)
 
-                    coeffs = torch.mul(d_prev, mvms.squeeze(-1)).sum(dim=-1).div(dkd) # [k, batch]
+                    coeffs = torch.mul(kd_prev, curr_conjugate_vec.squeeze(-1)).sum(dim=-1).div(dkd) # [k, batch]
                     coeffs.masked_fill_(dkd_is_zero, 0.0)  
 
                     curr_conjugate_vec.sub_((d_prev * coeffs.unsqueeze(-1)).sum(dim=0).unsqueeze(-1))
 
-                    mvms.sub_((kd_prev * coeffs.unsqueeze(-1)).sum(dim=0).unsqueeze(-1))
+                    inner_products = torch.mul(kd_prev, curr_conjugate_vec.squeeze(-1)).sum(dim=-1)
 
-                    inner_products = torch.mul(d_prev, mvms.squeeze(-1)).sum(dim=-1)
-                    new_dkd = torch.mul(curr_conjugate_vec.squeeze(-1), mvms.squeeze(-1)).sum(dim=-1)
-
-                    scale = torch.sqrt(torch.mul(dkd.abs(), new_dkd.abs().clamp_min(eps)))
+                    scale = torch.sqrt(dkd.abs()) * torch.linalg.vector_norm(curr_conjugate_vec.squeeze(-1), ord=2, dim=-1).clamp_min(eps)
                     rel_inner_products = torch.div(inner_products.abs(), scale.clamp_min(eps))
 
                     if not torch.sum(rel_inner_products.abs() > tolerance):
@@ -334,6 +328,9 @@ def linear_cg(
                     tolerance_reached = True
                     break
         
+        mvms = matmul_closure(curr_conjugate_vec)
+            
+        if save_directions_cg:
             d_mat[k].copy_(curr_conjugate_vec.squeeze(-1))
             kd_mat[k].copy_(mvms.squeeze(-1))
             num_stored = k + 1
@@ -463,7 +460,8 @@ def linear_cg(
 
     if save_directions:
         d_mat = d_mat[:num_stored].permute(*range(1, 1 + len(batch_shape)), -1, 0).contiguous()
-        return result, d_mat
+        kd_mat = kd_mat[:num_stored].permute(*range(1, 1 + len(batch_shape)), -1, 0).contiguous()
+        return result, d_mat, kd_mat
 
     if n_tridiag:
         t_mat = t_mat[: last_tridiag_iter + 1, : last_tridiag_iter + 1]
@@ -493,7 +491,7 @@ def cg_store_lanczos_basis(
             "cg_store_lanczos_basis currently supports only the unpreconditioned case."
         )
 
-    result, d_mat = linear_cg(
+    result, d_mat, kd_mat = linear_cg(
         matmul_closure,
         rhs,
         n_tridiag=n_tridiag,
@@ -510,9 +508,13 @@ def cg_store_lanczos_basis(
     if d_mat.dim() != 3 or d_mat.shape[0] != 1:
         raise ValueError("This prototype currently expects d_mat with shape [1, n, J].")
 
-    q_mat, _ = torch.linalg.qr(d_mat, mode="reduced")
+    q_mat, r_mat = torch.linalg.qr(d_mat, mode="reduced")
 
-    return result, q_mat
+    kq_mat_t = torch.linalg.solve(r_mat.transpose(-1,-2), kd_mat.transpose(-1,-2))
+
+    t_mat = kq_mat_t.matmul(q_mat)
+
+    return result, q_mat, t_mat
 
 
 
