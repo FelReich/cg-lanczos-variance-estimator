@@ -24,7 +24,7 @@ from src.means import ZeroMean
 
 def compare_lanczos_extended_love(
     *,
-    n: int = 10000,
+    n: int = 1000,
     m: int = 100,
     cg_J: int = 100,
     lanczos_J: int = 100,

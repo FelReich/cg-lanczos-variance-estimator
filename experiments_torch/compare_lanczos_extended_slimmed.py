@@ -45,7 +45,7 @@ def compare_lanczos_extended_love(
         lengthscales = [0.1, 0.3, 1.0, 3.0, 10.0]
 
     if noises is None:
-        noises = [1e-4, 1e-2, 1.0]
+        noises = [1e-6, 1e-4, 1e-2, 1.0]
 
     if jitters is None:
         jitters = [1e-6]#[1e-8, 1e-6, 1e-4]

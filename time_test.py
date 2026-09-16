@@ -1,519 +1,245 @@
 from __future__ import annotations
 
-import time
-import warnings
-
-import torch
-
-from src_torch.gp import GP
-from src_torch.kernels import RBFKernel
-from src_torch.means import ZeroMean
-from src_torch.linalg.cg import cg_store_lanczos_basis
-from src_torch.linalg.lanczos import lanczos_tridiag, extend_lanczos_basis
-from src_torch.corrections import exact_correction, love_correction
-
-warnings.filterwarnings("ignore")
-
-
-
 import sys
+import warnings
 from pathlib import Path
 
 import torch
 
+warnings.filterwarnings("ignore")
+
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from src_torch.linalg.cg import linear_cg
+from src_torch.linalg.cg import cg_store_lanczos_basis
 from src_torch.linalg.lanczos import lanczos_tridiag
+from src_torch.corrections import exact_correction, love_correction
+from src_torch.kernels import RBFKernel
 
 
-def sync_if_needed(device: torch.device) -> None:
-    if device.type == "cuda":
-        torch.cuda.synchronize(device)
-    elif device.type == "mps":
-        torch.mps.synchronize()
+def relative_error(approx: torch.Tensor, exact: torch.Tensor) -> torch.Tensor:
+    denom = torch.linalg.matrix_norm(exact)
+    if denom == 0:
+        return torch.linalg.matrix_norm(approx - exact)
+    return torch.linalg.matrix_norm(approx - exact) / denom
 
 
-def timed(device: torch.device, fn):
-    sync_if_needed(device)
-    start = time.perf_counter()
-    out = fn()
-    sync_if_needed(device)
-    return out, time.perf_counter() - start
+def subspace_diagnostics(Q_a: torch.Tensor, Q_b: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    # Q_a, Q_b: [batch, n, J]
+    M = Q_a.transpose(-1, -2) @ Q_b
+    singular_values = torch.linalg.svdvals(M)
 
+    min_cos = singular_values.min(dim=-1).values
 
-def relative_error(approx, exact):
-    return torch.linalg.vector_norm(approx - exact) / torch.linalg.vector_norm(exact)
+    P_a = Q_a @ Q_a.transpose(-1, -2)
+    P_b = Q_b @ Q_b.transpose(-1, -2)
 
-
-def run_case(
-    lengthscale,
-    noise,
-    jitter=1e-6,
-    n_train=10_000,
-    n_test=100,
-    max_iter=500,
-    device="cpu",
-    dtype=torch.float64,
-    seed=0,
-):
-    device = torch.device(device)
-    torch.manual_seed(seed)
-
-    X_train = torch.linspace(-3.0, 3.0, n_train, device=device, dtype=dtype).unsqueeze(-1)
-    y_train = torch.sin(X_train.squeeze(-1))
-    X_test = torch.linspace(-2.5, 2.5, n_test, device=device, dtype=dtype).unsqueeze(-1)
-
-    kernel = RBFKernel(lengthscale=lengthscale, outputscale=1.0)
-    mean = ZeroMean()
-
-    gp_exact = GP(X_train, y_train, kernel, mean, noise=noise)
-    gp_exact.compute_posterior(method="exact")
-
-    K_noise = gp_exact.K_noise
-    K_test = gp_exact.prior_covariance(X_test)
-    k = gp_exact.train_test_covariance(X_test)
-    rhs = gp_exact._rhs()
-
-    exact_cov = K_test - exact_correction(K_noise, k)
-
-    def matmul_closure(v):
-        return torch.matmul(K_noise.unsqueeze(0), v)
-
-    print()
-    print(f"case lengthscale={lengthscale}, noise={noise}, jitter={jitter}")
-    print("-" * 80)
-
-    # EXT path
-    (res_store, Q_resid), t_cg_store = timed(
-        device,
-        lambda: cg_store_lanczos_basis(
-            matmul_closure,
-            rhs,
-            tolerance=1e-10 if dtype == torch.float64 else 1e-5,
-            eps=1e-12 if dtype == torch.float64 else 1e-6,
-            stop_updating_after=1e-10 if dtype == torch.float64 else 1e-5,
-            max_iter=max_iter,
-        ),
+    defect = (
+        torch.linalg.matrix_norm(P_a - P_b)
+        / torch.linalg.matrix_norm(P_b)
     )
 
-    (Q_ext, T_ext), t_extend = timed(
-        device,
-        lambda: extend_lanczos_basis(
-            matmul_closure,
-            max_iter,
-            dtype,
-            device,
-            K_noise.shape,
-            Q_resid,
-            tol=1e-12 if dtype == torch.float64 else 1e-6,
-        ),
-    )
+    return min_cos, defect
 
-    ext_cov, t_ext_corr = timed(
-        device,
-        lambda: K_test - love_correction(
-            Q_ext.squeeze(0),
-            T_ext.squeeze(0),
-            k,
-            jitter=jitter,
-        ),
-    )
 
-    # LOVE path
-    (Q_love, T_love), t_love_basis = timed(
-        device,
-        lambda: lanczos_tridiag(
-            matmul_closure,
-            max_iter,
-            dtype,
-            device,
-            K_noise.shape,
-            batch_shape=torch.Size([1]),
-            init_vecs=rhs,
-            num_init_vecs=1,
-            tol=1e-12 if dtype == torch.float64 else 1e-6,
-        ),
-    )
+def aligned_t_error(Q_a: torch.Tensor, T_a: torch.Tensor, Q_b: torch.Tensor, T_b: torch.Tensor) -> torch.Tensor:
+    # Align basis a to basis b by the overlap matrix.
+    # If the subspaces agree, S is nearly orthogonal and S.T @ T_a @ S should match T_b.
+    S = Q_a.transpose(-1, -2) @ Q_b
+    T_a_aligned = S.transpose(-1, -2) @ T_a @ S
 
-    love_cov, t_love_corr = timed(
-        device,
-        lambda: K_test - love_correction(
-            Q_love.squeeze(0),
-            T_love.squeeze(0),
-            k,
-            jitter=jitter,
-        ),
-    )
-
-    total_ext = t_cg_store + t_extend + t_ext_corr
-    total_love = t_love_basis + t_love_corr
-
-    print(f"J_resid: {Q_resid.shape[-1]}")
-    print(f"J_ext:   {Q_ext.shape[-1]}")
-    print(f"J_love:  {Q_love.shape[-1]}")
-    print()
-    print("EXT timings")
-    print(f"  cg_store:    {t_cg_store:.4e}")
-    print(f"  extend:      {t_extend:.4e}")
-    print(f"  correction:  {t_ext_corr:.4e}")
-    print(f"  total:       {total_ext:.4e}")
-    print()
-    print("LOVE timings")
-    print(f"  basis:       {t_love_basis:.4e}")
-    print(f"  correction:  {t_love_corr:.4e}")
-    print(f"  total:       {total_love:.4e}")
-    print()
-    print("accuracy")
-    print(f"  rel_ext_exact:   {relative_error(ext_cov, exact_cov):.4e}")
-    print(f"  rel_love_exact:  {relative_error(love_cov, exact_cov):.4e}")
-    print(f"  rel_diff_time:   {(total_ext - total_love) / total_love:.4e}")
-
-
-def main():
-    cases = [
-        (0.3, 1.0),
-        (3.0, 1e-2),
-        (10.0, 1e-4),
-        (1.0, 1.0),
-    ]
-
-    for lengthscale, noise in cases:
-        run_case(
-            lengthscale=lengthscale,
-            noise=noise,
-            jitter=1e-6,
-            n_train=10_000,
-            n_test=100,
-            max_iter=500,
-            device="cpu",
-            dtype=torch.float64,
-        )
-
-
-
-
-
-
-def rbf_kernel(X1, X2, lengthscale=1.0, outputscale=1.0):
-    X1 = X1.reshape(-1, 1)
-    X2 = X2.reshape(-1, 1)
-
-    sq_dist = (X1[:, None, :] - X2[None, :, :]).pow(2).sum(dim=-1)
-
-    return outputscale**2 * torch.exp(-sq_dist / (2.0 * lengthscale**2))
-
-
-def matmul_basis(matmul_closure, Q):
-    cols = []
-
-    for j in range(Q.size(-1)):
-        cols.append(matmul_closure(Q[..., :, j : j + 1]))
-
-    return torch.cat(cols, dim=-1)
-
-
-def direct_projected_matrix(matmul_closure, Q):
-    KQ = matmul_basis(matmul_closure, Q)
-    T = Q.transpose(-1, -2).matmul(KQ)
-
-    return 0.5 * (T + T.transpose(-1, -2))
-
-
-def recover_cg_basis_and_t(matmul_closure, rhs, max_iter, tolerance, eps):
-    out = linear_cg(
-        matmul_closure,
-        rhs,
-        tolerance=tolerance,
-        eps=eps,
-        stop_updating_after=eps,
-        max_iter=max_iter,
-        save_directions=True,
-    )
-
-    if not isinstance(out, tuple):
-        raise RuntimeError("linear_cg did not return stored directions.")
-
-    if len(out) == 3:
-        result, d_mat, kd_mat = out
-
-        q_mat, r_mat = torch.linalg.qr(d_mat, mode="reduced")
-
-        # This is KQ^T.
-        kq_mat_t = torch.linalg.solve(
-            r_mat.transpose(-1, -2),
-            kd_mat.transpose(-1, -2),
-        )
-
-        t_mat = kq_mat_t.matmul(q_mat)
-        t_mat = 0.5 * (t_mat + t_mat.transpose(-1, -2))
-
-        kq_direct = matmul_basis(matmul_closure, q_mat)
-        t_direct = direct_projected_matrix(matmul_closure, q_mat)
-
-        print("\nCG recovery diagnostics")
-        print("-" * 72)
-        print("d_mat:", d_mat.shape)
-        print("q_mat:", q_mat.shape)
-        print("t_mat:", t_mat.shape)
-        print("KQ solve/direct error:",
-              torch.linalg.matrix_norm(kq_mat_t.transpose(-1, -2) - kq_direct) / torch.linalg.matrix_norm(kq_direct))
-        print("T solve/direct error:",
-              torch.linalg.matrix_norm(t_mat - t_direct) / torch.linalg.matrix_norm(t_direct))
-        print("min eig T solve:", torch.linalg.eigvalsh(t_mat).min())
-        print("min eig T direct:", torch.linalg.eigvalsh(t_direct).min())
-        print("cond R:", torch.linalg.cond(r_mat))
-
-        return result, q_mat, t_mat
-
-    if len(out) == 2:
-        result, d_mat = out
-
-        q_mat, _ = torch.linalg.qr(d_mat, mode="reduced")
-        t_mat = direct_projected_matrix(matmul_closure, q_mat)
-
-        print("\nCG recovery diagnostics")
-        print("-" * 72)
-        print("linear_cg returned only d_mat, so T is computed directly.")
-        print("d_mat:", d_mat.shape)
-        print("q_mat:", q_mat.shape)
-        print("t_mat:", t_mat.shape)
-        print("min eig T direct:", torch.linalg.eigvalsh(t_mat).min())
-
-        return result, q_mat, t_mat
-
-    raise RuntimeError(f"Unexpected linear_cg return length: {len(out)}")
-
-
-def compare_to_lanczos(matmul_closure, Q_cg, T_cg, max_iter, dtype, device, matrix_shape):
-    Q_love, T_love = lanczos_tridiag(
-        matmul_closure,
-        max_iter,
-        dtype=dtype,
-        device=device,
-        matrix_shape=matrix_shape,
-        batch_shape=torch.Size([1]),
-        init_vecs=Q_cg[..., :, :1],
-        num_init_vecs=1,
-        tol=1e-6,
-    )
-
-    J = min(Q_cg.shape[-1], Q_love.shape[-1])
-
-    Qc = Q_cg[..., :, :J]
-    Ql = Q_love[..., :, :J]
-    Tc = T_cg[..., :J, :J]
-    Tl = T_love[..., :J, :J]
-
-    overlap = Ql.transpose(-1, -2).matmul(Qc)
-    svals = torch.linalg.svdvals(overlap)
-
-    C = overlap
-    Tl_in_cg_basis = C.transpose(-1, -2).matmul(Tl).matmul(C)
-
-    print("\nCG basis vs Lanczos basis")
-    print("-" * 72)
-    print("J compare:", J)
-    print("min principal cosine:", svals.min())
-    print("subspace defect:",
-          torch.linalg.matrix_norm(Qc.matmul(Qc.transpose(-1, -2)) - Ql.matmul(Ql.transpose(-1, -2))))
-    print("relative aligned T error:",
-          torch.linalg.matrix_norm(Tc - Tl_in_cg_basis) / torch.linalg.matrix_norm(Tl_in_cg_basis))
-    print("min eig T cg:", torch.linalg.eigvalsh(Tc).min())
-    print("min eig T love:", torch.linalg.eigvalsh(Tl).min())
-
-
-def debug_extend_with_stored_t(matmul_closure, Q0, T0, target_iter, tol=1e-6):
-    if Q0.dim() != 3:
-        raise ValueError("Q0 must have shape [batch, n, J].")
-
-    batch_shape = Q0.shape[:-2]
-    n = Q0.size(-2)
-    current_iter = Q0.size(-1)
-    dtype = Q0.dtype
-    device = Q0.device
-
-    q_ext = Q0.new_zeros(target_iter, *batch_shape, n)
-    q_ext[:current_iter].copy_(Q0.permute(-1, *range(len(batch_shape)), -2))
-
-    t_ext = T0.new_zeros(target_iter, target_iter, *batch_shape)
-    t_ext[:current_iter, :current_iter].copy_(
-        T0.permute(-2, -1, *range(len(batch_shape)))
-    )
-
-    print("\nInitial extension state")
-    print("-" * 72)
-    check_extension_state(matmul_closure, q_ext, t_ext, current_iter, batch_shape, label="initial")
-
-    # Start exactly like the NumPy recurrence version.
-    q = q_ext[current_iter - 1]  # [batch, n]
-    v = matmul_closure(q.unsqueeze(-1)).squeeze(-1)
-
-    alpha_last = t_ext[current_iter - 1, current_iter - 1]  # [batch]
-    v = v - alpha_last.unsqueeze(-1) * q
-
-    if current_iter > 1:
-        beta_prev = t_ext[current_iter - 2, current_iter - 1]  # [batch]
-        q_prev = q_ext[current_iter - 2]
-        v = v - beta_prev.unsqueeze(-1) * q_prev
-
-    # Same two-pass Euclidean reorthogonalization as NumPy.
-    for _ in range(2):
-        coeffs = (q_ext[:current_iter] * v.unsqueeze(0)).sum(dim=-1)  # [J, batch]
-        v = v - (q_ext[:current_iter] * coeffs.unsqueeze(-1)).sum(dim=0)
-
-    num_iter = current_iter
-
-    for j in range(current_iter, target_iter):
-        beta = torch.linalg.vector_norm(v, ord=2, dim=-1)  # [batch]
-
-        if torch.sum(beta.abs() > tol) == 0:
-            print("breakdown at j =", j)
-            break
-
-        t_ext[j - 1, j].copy_(beta)
-        t_ext[j, j - 1].copy_(beta)
-
-        q_prev = q
-        q = v / beta.clamp_min(torch.finfo(dtype).eps).unsqueeze(-1)
-
-        q_ext[j].copy_(q)
-        num_iter = j + 1
-
-        Kq = matmul_closure(q.unsqueeze(-1)).squeeze(-1)
-
-        alpha = (q * Kq).sum(dim=-1)
-        t_ext[j, j].copy_(alpha)
-
-        v = Kq - alpha.unsqueeze(-1) * q - beta.unsqueeze(-1) * q_prev
-
-        for _ in range(2):
-            coeffs = (q_ext[:num_iter] * v.unsqueeze(0)).sum(dim=-1)
-            v = v - (q_ext[:num_iter] * coeffs.unsqueeze(-1)).sum(dim=0)
-
-        if j < current_iter + 10 or j % 25 == 0 or j == target_iter - 1:
-            check_extension_state(
-                matmul_closure,
-                q_ext,
-                t_ext,
-                num_iter,
-                batch_shape,
-                label=f"after j={j}",
-            )
-
-    q_final = q_ext[:num_iter].permute(*range(1, 1 + len(batch_shape)), -1, 0).contiguous()
-
-    t_raw = t_ext[:num_iter, :num_iter]
-    t_final = t_raw.permute(*range(2, 2 + len(batch_shape)), 0, 1).contiguous()
-    t_final = 0.5 * (t_final + t_final.transpose(-1, -2))
-
-    t_direct = direct_projected_matrix(matmul_closure, q_final)
-
-    print("\nFinal extension state")
-    print("-" * 72)
-    print("Q final:", q_final.shape)
-    print("T stored:", t_final.shape)
-    print("T direct:", t_direct.shape)
-    print("final T stored/direct error:",
-          torch.linalg.matrix_norm(t_final - t_direct) / torch.linalg.matrix_norm(t_direct))
-    print("final min eig stored:", torch.linalg.eigvalsh(t_final).min())
-    print("final min eig direct:", torch.linalg.eigvalsh(t_direct).min())
-
-    return q_final, t_final, t_direct
-
-
-def check_extension_state(matmul_closure, q_ext, t_ext, num_iter, batch_shape, label):
-    q_now = q_ext[:num_iter].permute(*range(1, 1 + len(batch_shape)), -1, 0).contiguous()
-
-    t_raw = t_ext[:num_iter, :num_iter]
-    t_now = t_raw.permute(*range(2, 2 + len(batch_shape)), 0, 1).contiguous()
-    t_now = 0.5 * (t_now + t_now.transpose(-1, -2))
-
-    t_direct = direct_projected_matrix(matmul_closure, q_now)
-
-    eye = torch.eye(num_iter, dtype=q_now.dtype, device=q_now.device).expand(*batch_shape, num_iter, num_iter)
-
-    q_orth = torch.linalg.matrix_norm(q_now.transpose(-1, -2).matmul(q_now) - eye)
-    t_err = torch.linalg.matrix_norm(t_now - t_direct) / torch.linalg.matrix_norm(t_direct)
-
-    print(
-        label,
-        "| J", num_iter,
-        "| Q orth", q_orth.item(),
-        "| T err", t_err.item(),
-        "| min eig stored", torch.linalg.eigvalsh(t_now).min().item(),
-        "| min eig direct", torch.linalg.eigvalsh(t_direct).min().item(),
-    )
+    return torch.linalg.matrix_norm(T_a_aligned - T_b) / torch.linalg.matrix_norm(T_b)
 
 
 def run_case(
     *,
-    n=1000,
-    lengthscale=0.1,
-    noise=1e-2,
-    max_cg_iter=500,
-    target_iter=356,
-    dtype=torch.float64,
-    device="cpu",
-):
+    n: int = 1000,
+    n_test: int = 100,
+    lengthscale: float = 0.1,
+    noise: float = 1e-4,
+    jitter: float = 1e-6,
+    max_cg_iter: int = 500,
+    max_lanczos_iter: int = 500,
+    dtype: torch.dtype = torch.float64,
+    device: str | torch.device = "cpu",
+    seed: int = 0,
+) -> None:
     device = torch.device(device)
+    torch.manual_seed(seed)
 
-    torch.manual_seed(0)
+    print()
+    print("# CASE")
+    print(f"n: {n}")
+    print(f"lengthscale: {lengthscale}")
+    print(f"noise: {noise}")
+    print(f"jitter: {jitter}")
+    print(f"dtype: {dtype}")
+    print(f"device: {device}")
+    print()
 
-    X = torch.linspace(-3.0, 3.0, n, dtype=dtype, device=device)
-    y = torch.sin(X).reshape(1, n, 1)
+    X_train = torch.linspace(0.0, 1.0, n, dtype=dtype, device=device).unsqueeze(-1)
+    X_test = torch.linspace(0.05, 0.95, n_test, dtype=dtype, device=device).unsqueeze(-1)
 
-    K = rbf_kernel(X, X, lengthscale=lengthscale).to(dtype=dtype, device=device)
-    K = K + noise * torch.eye(n, dtype=dtype, device=device)
+    y_train = (
+        torch.sin(2.0 * torch.pi * X_train.squeeze(-1))
+        + 0.25 * torch.cos(6.0 * torch.pi * X_train.squeeze(-1))
+    ).unsqueeze(0).unsqueeze(-1)
 
-    K_batch = K.unsqueeze(0)
+    kernel = RBFKernel(lengthscale=lengthscale, outputscale=1.0)
 
-    def matmul_closure(v):
-        return K_batch.matmul(v)
+    K = kernel(X_train, X_train)
+    K_noise = K + noise * torch.eye(n, dtype=dtype, device=device)
+    K_test = kernel(X_train, X_test)
 
-    print("\nCASE")
-    print("=" * 72)
-    print("n:", n)
-    print("lengthscale:", lengthscale)
-    print("noise:", noise)
-    print("dtype:", dtype)
-    print("device:", device)
+    def matmul_closure(x: torch.Tensor) -> torch.Tensor:
+        return torch.matmul(K_noise, x)
 
-    result, Q_cg, T_cg = recover_cg_basis_and_t(
+    exact_cov = exact_correction(K_noise, K_test)
+
+    # -------------------------------------------------------------------------
+    # CG-derived basis and projected matrix.
+    # -------------------------------------------------------------------------
+    result_cg, Q_cg, T_cg = cg_store_lanczos_basis(
         matmul_closure,
-        y,
+        y_train,
+        tolerance=1e-10 if dtype == torch.float64 else 1e-6,
+        eps=1e-14 if dtype == torch.float64 else 1e-6,
+        stop_updating_after=1e-10 if dtype == torch.float64 else 1e-6,
         max_iter=max_cg_iter,
-        tolerance=1e-6,
-        eps=1e-12 if dtype == torch.float64 else 1e-6,
     )
 
-    compare_to_lanczos(
+    J_cg = Q_cg.shape[-1]
+
+    # Direct T diagnostic for CG basis.
+    KQ_cg_direct = matmul_closure(Q_cg)
+    T_cg_direct = Q_cg.transpose(-1, -2) @ KQ_cg_direct
+    T_cg_direct = 0.5 * (T_cg_direct + T_cg_direct.transpose(-1, -2))
+
+    # -------------------------------------------------------------------------
+    # LOVE basis, truncated to the same number of iterations.
+    # -------------------------------------------------------------------------
+    Q_love_full, T_love_full = lanczos_tridiag(
         matmul_closure,
-        Q_cg,
-        T_cg,
-        max_iter=min(target_iter, n),
-        dtype=dtype,
-        device=device,
-        matrix_shape=torch.Size([n, n]),
+        max(max_lanczos_iter, J_cg),
+        dtype,
+        device,
+        K_noise.shape,
+        batch_shape=torch.Size([1]),
+        init_vecs=y_train.contiguous(),
+        num_init_vecs=1,
+        tol=1e-6 if dtype == torch.float32 else 1e-12,
     )
 
-    debug_extend_with_stored_t(
-        matmul_closure,
-        Q_cg,
-        T_cg,
-        target_iter=min(target_iter, n),
-        tol=1e-6,
+    Q_love = Q_love_full[..., :, :J_cg].contiguous()
+    T_love = T_love_full[..., :J_cg, :J_cg].contiguous()
+
+    KQ_love_direct = matmul_closure(Q_love)
+    T_love_direct = Q_love.transpose(-1, -2) @ KQ_love_direct
+    T_love_direct = 0.5 * (T_love_direct + T_love_direct.transpose(-1, -2))
+
+    # -------------------------------------------------------------------------
+    # Corrections at the same iteration count.
+    # -------------------------------------------------------------------------
+    cg_cov = love_correction(
+        Q_cg.squeeze(0),
+        T_cg.squeeze(0),
+        K_test,
+        jitter=jitter,
     )
+
+    cg_direct_t_cov = love_correction(
+        Q_cg.squeeze(0),
+        T_cg_direct.squeeze(0),
+        K_test,
+        jitter=jitter,
+    )
+
+    love_same_cov = love_correction(
+        Q_love.squeeze(0),
+        T_love.squeeze(0),
+        K_test,
+        jitter=jitter,
+    )
+
+    # -------------------------------------------------------------------------
+    # Diagnostics.
+    # -------------------------------------------------------------------------
+    eye_cg = torch.eye(J_cg, dtype=dtype, device=device).unsqueeze(0)
+
+    Q_cg_orth = torch.linalg.matrix_norm(Q_cg.transpose(-1, -2) @ Q_cg - eye_cg)
+    Q_love_orth = torch.linalg.matrix_norm(Q_love.transpose(-1, -2) @ Q_love - eye_cg)
+
+    T_cg_direct_err = (
+        torch.linalg.matrix_norm(T_cg - T_cg_direct)
+        / torch.linalg.matrix_norm(T_cg_direct)
+    )
+
+    T_love_direct_err = (
+        torch.linalg.matrix_norm(T_love - T_love_direct)
+        / torch.linalg.matrix_norm(T_love_direct)
+    )
+
+    min_cos, subspace_defect = subspace_diagnostics(Q_cg, Q_love)
+    T_aligned_err = aligned_t_error(Q_cg, T_cg, Q_love, T_love)
+
+    cg_vs_love_cov = relative_error(cg_cov, love_same_cov)
+    cg_direct_t_vs_love_cov = relative_error(cg_direct_t_cov, love_same_cov)
+
+    print("Shapes")
+    print("Q_cg:", Q_cg.shape, "T_cg:", T_cg.shape)
+    print("Q_love same:", Q_love.shape, "T_love same:", T_love.shape)
+    print()
+
+    print("Iterations")
+    print("J_cg:", J_cg)
+    print()
+
+    print("Basis diagnostics")
+    print("Q_cg orth:", Q_cg_orth)
+    print("Q_love orth:", Q_love_orth)
+    print("min principal cosine:", min_cos)
+    print("subspace defect:", subspace_defect)
+    print()
+
+    print("T diagnostics")
+    print("T_cg/direct:", T_cg_direct_err)
+    print("T_love/direct:", T_love_direct_err)
+    print("aligned T error:", T_aligned_err)
+    print("min eig T_cg:", torch.linalg.eigvalsh(T_cg).min())
+    print("min eig T_cg_direct:", torch.linalg.eigvalsh(T_cg_direct).min())
+    print("min eig T_love:", torch.linalg.eigvalsh(T_love).min())
+    print()
+
+    print("Covariance accuracy")
+    print("rel_cg_exact:", relative_error(cg_cov, exact_cov))
+    print("rel_cg_direct_t_exact:", relative_error(cg_direct_t_cov, exact_cov))
+    print("rel_love_same_exact:", relative_error(love_same_cov, exact_cov))
+    print("rel_cg_love_same:", cg_vs_love_cov)
+    print("rel_cg_direct_t_love_same:", cg_direct_t_vs_love_cov)
+
+
+def main() -> None:
+    cases = [
+        dict(lengthscale=0.1, noise=1e-4),
+        dict(lengthscale=0.1, noise=1e-2),
+        dict(lengthscale=0.3, noise=1e-4),
+        dict(lengthscale=1.0, noise=1e-4),
+        dict(lengthscale=3.0, noise=1e-4),
+        dict(lengthscale=10.0, noise=1e-4),
+    ]
+
+    for case in cases:
+        run_case(
+            n=1000,
+            n_test=100,
+            jitter=1e-6,
+            max_cg_iter=500,
+            max_lanczos_iter=500,
+            dtype=torch.float64,
+            device="cpu",
+            **case,
+        )
 
 
 if __name__ == "__main__":
-    run_case(
-        n=1000,
-        lengthscale=0.1,
-        noise=1e-2,
-        max_cg_iter=500,
-        target_iter=356,
-        dtype=torch.float64,
-        device="cpu",
-    )
+    main()
