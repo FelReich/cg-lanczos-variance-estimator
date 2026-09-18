@@ -22,6 +22,12 @@ from src_torch.means import ZeroMean
 
 
 def _sync_if_needed(device: torch.device) -> None:
+    """Synchronize asynchronous GPU work before taking timings.
+
+    CUDA operations are asynchronous by default, so wall-clock timings measured
+    with ``time.perf_counter`` would otherwise only measure kernel launch time.
+    On CPU no synchronization is required.
+    """
     if device.type == "cuda":
         torch.cuda.synchronize(device)
 
@@ -39,8 +45,46 @@ def compare_lanczos_extended_love(
     domain: tuple[float, float] = (-10.0, 10.0),
     seed: int = 123,
     dtype: torch.dtype = torch.float64,
-    device: str | torch.device = "cpu",
 ) -> None:
+    """Compare CG-initialized Lanczos extension against standard LOVE.
+
+    The experiment samples one-dimensional training and test inputs, builds a
+    dense Gaussian process regression problem, and compares two covariance
+    approximation strategies. The computation is run on CUDA if
+    ``torch.cuda.is_available()`` returns ``True``; otherwise it falls back to
+    CPU.
+
+    1. a CG-based method that stores Krylov information during the posterior
+       mean solve, converts it into a Lanczos-type basis, and extends this basis;
+    2. the standard LOVE baseline based on an ordinary Lanczos run initialized
+       from the right-hand side.
+
+    For each combination of lengthscale, noise level, and jitter, the function
+    prints the basis sizes, total runtimes, relative runtime difference, and
+    covariance errors relative to the exact posterior covariance. It also prints
+    diagnostic solve errors for the CG-based and Lanczos-based posterior mean
+    solves, and a comparison between the two projected covariance operators.
+
+    Args:
+        n: Number of training points.
+        m: Number of test points.
+        cg_J: Maximum number of CG iterations used by the posterior mean solve.
+        lanczos_J: Maximum number of Lanczos iterations used for LOVE and for
+            the extended basis.
+        outputscale: Output scale parameter of the RBF kernel.
+        lengthscales: Lengthscale values to test. If ``None``, a default grid is
+            used.
+        noises: Observation-noise values to test. If ``None``, a default grid is
+            used.
+        jitters: Jitter values used in the LOVE-style covariance correction. If
+            ``None``, a default value is used.
+        domain: Interval from which training and test inputs are sampled.
+        seed: Random seed used for reproducible input locations.
+        dtype: Torch floating-point dtype used throughout the experiment.
+
+    Returns:
+        None. Results are printed as a table.
+    """
     if lengthscales is None:
         lengthscales = [0.1, 0.3, 1.0, 3.0, 10.0]
 
@@ -48,14 +92,14 @@ def compare_lanczos_extended_love(
         noises = [1e-6, 1e-4, 1e-2, 1.0]
 
     if jitters is None:
-        jitters = [1e-6]#[1e-8, 1e-6, 1e-4]
+        jitters = [1e-6]
 
     if dtype == torch.float64:
         tol = 1e-6
     else:
         tol = 1e-3
 
-    device = torch.device(device)
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     generator = torch.Generator(device=device)
     generator.manual_seed(seed)
@@ -263,4 +307,3 @@ def compare_lanczos_extended_love(
 if __name__ == "__main__":
     compare_lanczos_extended_love()
     compare_lanczos_extended_love(dtype=torch.float32)
-    #compare_lanczos_extended_love(device="mps", dtype=torch.float32)

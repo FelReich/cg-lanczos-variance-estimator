@@ -8,15 +8,24 @@ def exact_correction(K_noise: torch.Tensor, k: torch.Tensor) -> torch.Tensor:
     return k.T @ torch.linalg.solve(K_noise, k)
 
 
-def love_correction_old(
+def love_correction_theory(
     Q: torch.Tensor,
     T: torch.Tensor,
     k: torch.Tensor,
     jitter: float = 1e-6,
     max_tries: int = 5,
 ) -> torch.Tensor:
-    # Computes a LOVE-style covariance reduction term from a basis and projected matrix.
-    eye = torch.eye(T.shape[0], dtype=T.dtype, device=T.device)
+    """Compute the LOVE-style covariance reduction term from the theoretical form.
+
+    This version evaluates
+
+        k.T @ Q @ T^{-1} @ Q.T @ k
+
+    using a Cholesky factorization of the projected matrix ``T``. It therefore
+    follows the formula used in the theoretical derivation directly. If the
+    Cholesky factorization fails, the diagonal jitter is increased geometrically.
+    """
+    eye = torch.eye(T.size(-1), dtype=T.dtype, device=T.device)
 
     for i in range(max_tries):
         jitter_i = jitter * (10**i)
@@ -41,7 +50,22 @@ def love_correction(
     k: torch.Tensor,
     jitter: float = 1e-6,
 ) -> torch.Tensor:
-    # Computes a LOVE-style covariance reduction term from a basis and projected matrix.
+    """Compute the LOVE-style covariance reduction as in linear_operator.
+
+    This version mirrors the implementation used by ``linear_operator``:
+    a small diagonal jitter proportional to the minimum diagonal entry of ``T``
+    is added, then an eigendecomposition of the projected matrix is used to
+    construct an inverse-root factor. Non-positive eigenvalues that remain after
+    adding jitter are masked out, matching the numerical safeguard used in the
+    original implementation.
+
+    The returned matrix is the covariance reduction term
+
+        k.T @ Q @ T^{-1} @ Q.T @ k,
+
+    evaluated through the inverse-root factor rather than through a Cholesky
+    solve.
+    """
     diag = torch.diagonal(T, dim1=-2, dim2=-1)
     mins = diag.min(dim=-1, keepdim=True).values.unsqueeze(-1)
 
