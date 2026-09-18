@@ -289,13 +289,5 @@ def extend_lanczos_basis(
             break
 
     q_final = q_ext[:num_iter].permute(*range(1, 1 + len(batch_shape)), -1, 0).contiguous()
-
-    #t_final = torch.matmul(q_final.transpose(-1,-2), matmul_closure(q_final))
     t_final = t_ext[:num_iter, :num_iter].squeeze(-1).permute(*range(2, 2 + len(batch_shape)), 0, 1).contiguous()
-    KQ_ext_direct = torch.cat(
-        [matmul_closure(q_final[..., :, j:j+1]) for j in range(q_final.size(-1))],
-        dim=-1,
-    )
-    T_ext_direct = q_final.transpose(-1, -2) @ KQ_ext_direct
-    T_ext_direct = 0.5 * (T_ext_direct + T_ext_direct.transpose(-1, -2))
     return q_final, 0.5 * (t_final + t_final.transpose(-1, -2))
