@@ -22,6 +22,12 @@ from src_torch.means import ZeroMean
 
 
 def _sync_if_needed(device: torch.device) -> None:
+    """Synchronize CUDA work before taking wall-clock timings.
+
+    CUDA operations are asynchronous, so timings measured with
+    ``time.perf_counter`` would otherwise mostly measure kernel launch time.
+    On CPU no synchronization is required.
+    """
     if device.type == "cuda":
         torch.cuda.synchronize(device)
 
@@ -41,6 +47,49 @@ def compare_lanczos_extended_love(
     dtype: torch.dtype = torch.float64,
     device: str | torch.device = "cpu",
 ) -> None:
+    """Compare the CG-initialized Lanczos prototype against standard LOVE.
+
+    The experiment builds dense one-dimensional Gaussian process regression
+    problems and compares two covariance approximation strategies:
+
+    1. a CG-based method that stores search directions during the posterior mean
+       solve, converts them into an orthonormal basis, extends this basis by
+       Lanczos iterations, and finally computes the projected matrix directly as
+       ``T = Q.T @ A @ Q``;
+    2. the standard LOVE baseline, which obtains its basis from an ordinary
+       Lanczos run initialized from the right-hand side.
+
+    For each lengthscale, noise level, and jitter value, the function prints the
+    basis sizes, total runtimes, relative runtime difference, covariance errors
+    relative to the exact posterior covariance, posterior-mean solve errors, and
+    a comparison between the two projected covariance operators.
+
+    The computation runs on the device specified by ``device``. If CUDA is used,
+    synchronization is inserted around timed regions so that the reported times
+    include actual GPU execution time.
+
+    Args:
+        n: Number of training points.
+        m: Number of test points.
+        cg_J: Maximum number of CG iterations used by the posterior mean solve.
+        lanczos_J: Maximum number of Lanczos iterations used for LOVE and for
+            the extended basis.
+        outputscale: Output scale parameter of the RBF kernel.
+        lengthscales: Lengthscale values to test. If ``None``, a default grid is
+            used.
+        noises: Observation-noise values to test. If ``None``, a default grid is
+            used.
+        jitters: Jitter values used in the LOVE-style covariance correction. If
+            ``None``, a default value is used.
+        domain: Interval from which training and test inputs are sampled.
+        seed: Random seed used for reproducible input locations.
+        dtype: Torch floating-point dtype used throughout the experiment.
+        device: Device on which to run the experiment, for example ``"cpu"`` or
+            ``"cuda"``.
+
+    Returns:
+        None. Results are printed as a table.
+    """
     if lengthscales is None:
         lengthscales = [0.1, 0.3, 1.0, 3.0, 10.0]
 
