@@ -212,6 +212,7 @@ def compare_lanczos_extended_love(
 
                     rhs_exact = y_train - gp_exact.mean(gp_exact.X_train)
                     res_exact = torch.linalg.solve(gp_exact.K_noise, rhs_exact)
+                    res_exact = res_exact.reshape(1, -1, 1)
 
                     Q_ext_2d = Q_ext.squeeze(0)
                     T_ext_2d = T_ext.squeeze(0)
