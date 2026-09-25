@@ -372,8 +372,6 @@ def linear_cg(
                 if not could_reorthogonalize:
                     save_directions_cg = False
                     num_stored = k
-                    tolerance_reached = True
-                    break
             
             # Store the reorthogonalized direction and matching matrix-vector product
             d_mat[k].copy_(curr_conjugate_vec.squeeze(-1))
