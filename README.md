@@ -19,6 +19,12 @@ script are available in [`benchmark_and_proposal/`](benchmark_and_proposal/):
 
 ### Reproducing the KeOps Benchmarks
 
+The script evaluates 200 matrix-free KeOps configurations with 100,000 training points, recording prediction times, GPU memory consumption, and numerical diagnostics in `keops_final_results.csv`.
+
+As detailed in our theoretical proposal (`ext_love_theory.pdf`):
+- **Performance:** The CG-Lanczos extension achieved a median runtime reduction of approximately 49% across all 200 configurations.
+- **Numerical Parity:** Out-of-the-box variance agreement was highly structured but not uniform; 55 low-noise or edge configurations exhibited marginal predictive variance differences exceeding 10% due to finite-precision QR conditioning and stopping rules, highlighting an open area for further algorithmic stabilization.
+
 To reproduce the results, place the benchmark script and the two customized libraries in the same parent directory:
 
 ```text
