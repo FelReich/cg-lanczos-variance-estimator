@@ -1,12 +1,48 @@
 # CG Lanczos Variance Estimator
 
-This repository contains NumPy and PyTorch prototype implementations for Gaussian process posterior variance approximation.
+This repository documents the development of an approach to reusing conjugate-gradient (CG) information for LOVE-based Gaussian process posterior variance approximation, initially implemented in NumPy and subsequently in PyTorch.
 
-The main idea is to reuse Krylov subspace information generated during conjugate gradients (CG) for the posterior mean solve in order to improve or reduce the cost of Lanczos-based posterior covariance approximations.
+The resulting approach has been integrated into customized versions of
+[GPyTorch](https://github.com/FelReich/gpytorch) and
+[linear_operator](https://github.com/FelReich/linear_operator).
+
+
+## Research Proposal and Benchmarks
+
+The theoretical proposal, experimental results, and KeOps GPU benchmark
+script are available in [`benchmark_and_proposal/`](benchmark_and_proposal/):
+
+- [`ext_love_theory.pdf`](benchmark_and_proposal/ext_love_theory.pdf): 
+  theoretical derivations and experimental findings.
+- [`run_keops_benchmark.py`](benchmark_and_proposal/run_keops_benchmark.py): 
+  benchmark comparing the CG-Lanczos extension with standard LOVE.
+
+### Reproducing the KeOps Benchmarks
+
+To reproduce the results, place the benchmark script and the two customized libraries in the same parent directory:
+
+```text
+benchmark_workspace/
+├── run_keops_benchmark.py
+├── gpytorch/
+└── linear_operator/
+```
+
+Clone the two libraries from
+[GPyTorch](https://github.com/FelReich/gpytorch) and
+[linear_operator](https://github.com/FelReich/linear_operator).
+
+With the required dependencies installed, run:
+
+```bash
+python run_keops_benchmark.py --device cuda --dtype float64 --no-preconditioner
+```
+
+The script evaluates 200 matrix-free KeOps configurations with 100,000 training points, recording prediction times, GPU memory consumption, and numerical diagnostics in `keops_final_results.csv`.
 
 ## Methods
 
-The repository currently includes:
+The repository includes:
 
 - exact Gaussian process posterior covariance computation,
 - LOVE-style Lanczos variance estimation,
